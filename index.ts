@@ -891,7 +891,12 @@ class MemoryDB {
   async textSearch(query: string, limit = 10): Promise<SearchResult[]> {
     await this.ensure();
     try {
-      const results = await this.table!.search("text").query(query).limit(limit).toArray();
+      // Use full-text search with LIKE for text matching
+      const results = await this.table!
+        .query()
+        .where(`text LIKE '%${query.replace(/'/g, "''")}%'`)
+        .limit(limit)
+        .toArray();
       return results
         .map((row) => ({
           id: row.id as string,
@@ -914,8 +919,12 @@ class MemoryDB {
   async incrementHitCount(id: string): Promise<void> {
     await this.ensure();
     try {
-      // Read the current entry
-      const results = await this.table!.search("text").query(`id=${id}`).limit(1).toArray();
+      // Read the current entry using query with where clause
+      const results = await this.table!
+        .query()
+        .where(`id = '${id.replace(/'/g, "''")}'`)
+        .limit(1)
+        .toArray();
       if (results.length > 0) {
         const entry = results[0] as any;
         const newHitCount = ((entry.hitCount as number) || 0) + 1;
@@ -933,7 +942,7 @@ class MemoryDB {
 
   async getAll(): Promise<MemoryEntry[]> {
     await this.ensure();
-    const results = await this.table!.search("text").query("").limit(10000).toArray();
+    const results = await this.table!.query().limit(10000).toArray();
     return results.map((row) => ({
       id: row.id as string,
       text: row.text as string,
@@ -982,7 +991,7 @@ class MemoryDB {
     }
 
     const oldTable = await this.db!.openTable(OLD_TABLE_NAME);
-    const results = await oldTable.search("text").query("").limit(10000).toArray();
+    const results = await oldTable.query().limit(10000).toArray();
     return results.map((row) => ({
       id: row.id as string,
       text: row.text as string,
