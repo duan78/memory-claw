@@ -1,8 +1,9 @@
 /**
- * memory-french — Enhanced French memory capture plugin for OpenClaw
+ * memory-claw (formerly memory-french) — Multilingual memory capture plugin for OpenClaw
  *
  * 100% autonomous plugin - manages its own DB, config, and tools.
  * Independent from memory-lancedb, survives OpenClaw updates.
+ * Now with multilingual support (French, English, Spanish, German).
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages
@@ -18,14 +19,14 @@
  * - `memory_gc`: Run garbage collection
  *
  * CLI Commands:
- * - `openclaw memory-fr list`: List stored memories
- * - `openclaw memory-fr search <query>`: Search memories
- * - `openclaw memory-fr stats`: Display statistics
- * - `openclaw memory-fr export [path]`: Export to JSON
- * - `openclaw memory-fr gc`: Run garbage collection
- * - `openclaw memory-fr clear`: Delete all memories (with confirmation)
+ * - `openclaw memory-claw list`: List stored memories
+ * - `openclaw memory-claw search <query>`: Search memories
+ * - `openclaw memory-claw stats`: Display statistics
+ * - `openclaw memory-claw export [path]`: Export to JSON
+ * - `openclaw memory-claw gc`: Run garbage collection
+ * - `openclaw memory-claw clear`: Delete all memories (with confirmation)
  *
- * @version 2.1.0
+ * @version 2.2.0
  * @author duan78
  */
 
@@ -37,6 +38,7 @@ import type * as LanceDB from "@lancedb/lancedb";
 import OpenAI from "openai";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { loadLocales, detectLanguage as detectLocaleLanguage, type LocalePatterns } from "./locales/index.js";
 
 // ============================================================================
 // Types & Config
@@ -62,6 +64,7 @@ type FrenchMemoryConfig = {
   rateLimitMaxPerHour?: number;
   enableWeightedRecall?: boolean;
   enableDynamicImportance?: boolean;
+  locales?: string[]; // v2.2.0: Active locales (default: ["fr", "en"])
 };
 
 type MemoryEntry = {
@@ -114,14 +117,19 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   rateLimitMaxPerHour: 10,
   enableWeightedRecall: true,
   enableDynamicImportance: true,
+  locales: ["fr", "en"], // v2.2.0: Default active locales
 };
 
-const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-french");
+const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-claw");
 
-const STATS_PATH = join(homedir(), ".openclaw", "memory", "memory-french-stats.json");
+const STATS_PATH = join(homedir(), ".openclaw", "memory", "memory-claw-stats.json");
 
-const TABLE_NAME = "memories_fr";
-const OLD_TABLE_NAME = "memories"; // For migration
+const TABLE_NAME = "memories_claw";
+const OLD_TABLE_NAME = "memories"; // For migration from memory-lancedb
+const LEGACY_TABLE_NAME = "memories_fr"; // For migration from memory-french v2.1.x
+
+// Global locale patterns (will be loaded at runtime based on config)
+let loadedPatterns: LocalePatterns;
 
 // ============================================================================
 // Category Importance Weights
@@ -303,6 +311,77 @@ const LOW_VALUE_PATTERNS = [
 ];
 
 // ============================================================================
+// Locale Pattern Integration (v2.2.0)
+// ============================================================================
+
+// Global locale patterns (will be loaded at runtime based on config)
+// Initialize with French patterns as default
+loadedPatterns = loadLocales(["fr"]);
+
+/**
+ * Initialize locale patterns from config
+ * @param localeCodes - Array of locale codes to load (e.g., ["fr", "en"])
+ */
+function initializeLocalePatterns(localeCodes: string[] = ["fr", "en"]): void {
+  loadedPatterns = loadLocales(localeCodes);
+}
+
+/**
+ * Get all active triggers (default + locale-specific)
+ */
+function getAllTriggers(): RegExp[] {
+  return [...FRENCH_TRIGGERS, ...loadedPatterns.triggers];
+}
+
+/**
+ * Get all skip patterns (default + locale-specific)
+ */
+function getAllSkipPatterns(): RegExp[] {
+  return [...SKIP_PATTERNS, ...loadedPatterns.skipPatterns];
+}
+
+/**
+ * Get all low-value patterns (default + locale-specific)
+ */
+function getAllLowValuePatterns(): RegExp[] {
+  return [...LOW_VALUE_PATTERNS, ...loadedPatterns.lowValuePatterns];
+}
+
+/**
+ * Get all injection patterns (default + locale-specific)
+ */
+function getAllInjectionPatterns(): RegExp[] {
+  return [...INJECTION_PATTERNS, ...loadedPatterns.injectionPatterns];
+}
+
+/**
+ * Get all importance keyword patterns (default + locale-specific)
+ */
+function getAllImportanceKeywordPatterns(): RegExp[] {
+  return [...IMPORTANCE_KEYWORD_PATTERNS, ...loadedPatterns.importanceKeywordPatterns];
+}
+
+/**
+ * Detect language from text
+ * @param text - Text to analyze
+ * @returns Detected language code
+ */
+function detectLanguage(text: string): string {
+  return detectLocaleLanguage(text);
+}
+
+/**
+ * Get category patterns for a specific category
+ * @param category - Category name
+ * @returns Array of regex patterns for the category
+ */
+function getCategoryPatterns(category: string): RegExp[] {
+  const categoryOverrides = loadedPatterns.categoryOverrides;
+  const patterns = categoryOverrides[category as keyof typeof categoryOverrides];
+  return patterns || [];
+}
+
+// ============================================================================
 // Prompt Injection Detection
 // ============================================================================
 
@@ -311,7 +390,7 @@ function calculateInjectionSuspicion(text: string): number {
   const normalized = text.toLowerCase();
   let suspicion = 0;
 
-  for (const pattern of INJECTION_PATTERNS) {
+  for (const pattern of getAllInjectionPatterns()) {
     if (pattern.test(normalized)) {
       suspicion += 0.3;
     }
@@ -351,7 +430,7 @@ function calculateImportance(
   }
 
   // Keyword bonus for importance indicators
-  for (const pattern of IMPORTANCE_KEYWORD_PATTERNS) {
+  for (const pattern of getAllImportanceKeywordPatterns()) {
     if (pattern.test(normalized)) {
       importance += 0.1;
       break; // Only apply once
@@ -577,15 +656,15 @@ function shouldCapture(
     return { should: false, importance: 0.5, suspicion };
   }
 
-  if (SKIP_PATTERNS.some((p) => p.test(normalized))) {
+  if (getAllSkipPatterns().some((p) => p.test(normalized))) {
     return { should: false, importance: 0.5, suspicion };
   }
 
-  if (LOW_VALUE_PATTERNS.some((p) => p.test(normalized))) {
+  if (getAllLowValuePatterns().some((p) => p.test(normalized))) {
     return { should: false, importance: 0.5, suspicion };
   }
 
-  if (!FRENCH_TRIGGERS.some((r) => r.test(normalized))) {
+  if (!getAllTriggers().some((r) => r.test(normalized))) {
     return { should: false, importance: 0.5, suspicion };
   }
 
@@ -600,31 +679,44 @@ function detectCategory(text: string): string {
   if (!text || typeof text !== "string") return "fact";
   const lower = text.toLowerCase();
 
-  if (/préfère|aime|déteste|adore|veux|choisis|évit|pas de|plutôt/i.test(lower)) {
+  // Check locale-specific category patterns first
+  const categoryOrder = ["entity", "preference", "decision", "seo", "technical", "workflow", "debug"];
+
+  for (const category of categoryOrder) {
+    const patterns = getCategoryPatterns(category);
+    for (const pattern of patterns) {
+      if (pattern.test(lower)) {
+        return category;
+      }
+    }
+  }
+
+  // Fallback to legacy hardcoded patterns (for backward compatibility)
+  if (/préfère|aime|déteste|adore|veux|choisis|évit|pas de|plutôt|prefer|like|love|want|choose|avoid/i.test(lower)) {
     return "preference";
   }
 
-  if (/décidé|décide|on utilise|on prend|on choisit|on adopte|d'accord|validé|confirmé/i.test(lower)) {
+  if (/décidé|décide|on utilise|on prend|on choisit|on adopte|d'accord|validé|confirmé|decided|decide|we use|we take|we choose|agreed|validated/i.test(lower)) {
     return "decision";
   }
 
-  if (/\+\d{10,}|@[\w.-]+\.\w+|s'appelle|mon nom|c'est\s+(?:un|une)\s+client/i.test(lower)) {
+  if (/\+\d{10,}|@[\w.-]+\.\w+|s'appelle|mon nom|c'est\s+(?:un|une)\s+client|'?s name|my name is|is my/i.test(lower)) {
     return "entity";
   }
 
-  if (/SEO|referencement|ranking|mots-cl[ée]s|keywords?|backlinks?|analytics|stats|contenu/i.test(lower)) {
+  if (/SEO|referencement|r[ée]f[ée]rencement|ranking|mots-cl[ée]s|keywords?|backlinks?|analytics|stats|contenu|content/i.test(lower)) {
     return "seo";
   }
 
-  if (/config|paramètres?|settings?|serveur|hosting|VPS|domaine|DNS|SSL|déploiement|deploy/i.test(lower)) {
+  if (/config|paramètres?|settings?|serveur|server|hosting|VPS|domaine|domain|DNS|SSL|déploiement|deploy/i.test(lower)) {
     return "technical";
   }
 
-  if (/projet|chantier|task|tâche|ticket|workflow|processus/i.test(lower)) {
+  if (/projet|project|chantier|task|tâche|ticket|workflow|processus/i.test(lower)) {
     return "workflow";
   }
 
-  if (/bug|erreur|error|probl[èe]me|issue|panic|crash/i.test(lower)) {
+  if (/bug|erreur|error|probl[èe]me|problem|issue|panic|crash/i.test(lower)) {
     return "debug";
   }
 
@@ -1164,19 +1256,26 @@ async function migrateFromMemoryLancedb(
 // ============================================================================
 
 const plugin = {
-  id: "memory-french",
-  name: "Memory French Enhancer",
-  description: "100% autonomous French memory plugin - own DB, config, and tools",
+  id: "memory-claw",
+  name: "MemoryClaw (Multilingual Memory)",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. Supports French, English, Spanish, German.",
 
   register(api: OpenClawPluginApi) {
-    // Read plugin config from openclaw.json
-    const pluginConfig = api.config?.plugins?.entries?.[
-      "memory-french"
+    // Read plugin config from openclaw.json (support both memory-claw and legacy memory-french)
+    let pluginConfig = api.config?.plugins?.entries?.[
+      "memory-claw"
     ]?.config as FrenchMemoryConfig | undefined;
+
+    // Fallback to legacy memory-french config for migration
+    if (!pluginConfig) {
+      pluginConfig = api.config?.plugins?.entries?.[
+        "memory-french"
+      ]?.config as FrenchMemoryConfig | undefined;
+    }
 
     if (!pluginConfig || !pluginConfig.embedding) {
       api.logger.warn(
-        "memory-french: No embedding config found in plugins.entries.memory-french.config. Plugin disabled."
+        "memory-claw: No embedding config found in plugins.entries. Plugin disabled."
       );
       return;
     }
@@ -1188,9 +1287,16 @@ const plugin = {
       embedding,
     };
 
+    // Initialize locale patterns based on config
+    const activeLocales = cfg.locales || ["fr", "en"];
+    initializeLocalePatterns(activeLocales);
+    api.logger.info(
+      `memory-claw: Loaded locales: ${activeLocales.join(", ")}`
+    );
+
     const apiKey = embedding.apiKey || process.env.MISTRAL_API_KEY || "";
     if (!apiKey) {
-      api.logger.warn("memory-french: No embedding API key found, plugin disabled");
+      api.logger.warn("memory-claw: No embedding API key found, plugin disabled");
       return;
     }
 
@@ -1208,7 +1314,7 @@ const plugin = {
     const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
 
     api.logger.info(
-      `memory-french v2.1.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour)`
+      `memory-claw v2.2.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.join(",")})`
     );
 
     // Run migration on first start if old table exists

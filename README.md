@@ -1,72 +1,142 @@
-# memory-french
+# Memory French v2.1.0
 
-Plugin OpenClaw **100% autonome** pour la capture et le rappel automatique de mémos en français via LanceDB + Mistral Embeddings.
+**Plugin 100% autonome pour la capture et le rappel de mémoires en français via LanceDB + Mistral Embeddings.**
 
-## 🎯 Pourquoi ?
+Memory French est un plugin OpenClaw autonome qui gère sa propre base de données, sa propre configuration et ses propres tools. Il capture automatiquement les faits, préférences et décisions importants de vos conversations et les rend disponibles via des recherches sémantiques avancées.
 
-- Le plugin officiel `memory-lancedb` a un auto-capture basé sur des patterns en anglais/tchèque qui ne matchent pas le français
-- Les MAJ d'OpenClaw peuvent écraser les extensions et casser la config
-- On voulait un plugin **indépendant**, avec **sa propre DB**, **sa propre config**, et des **tools autonomes**
+## 🎯 Vue d'ensemble
 
-## ✨ Fonctionnalités v2.1
+Memory French existe pour résoudre un problème fondamental : **les IA oublient tout entre les conversations**. Chaque nouvelle session commence from scratch, sans contexte ni mémoire des échanges précédents.
 
-- **100% autonome** — propre DB, propre config, propre tools. Zéro dépendance à memory-lancedb
-- **6 tools** : store, recall, forget, export, import, garbage collection
-- **6 CLI commands** : list, search, stats, export, gc, clear
-- **3 hooks** : agent_end, session_end (crash recovery), before_agent_start (recall)
-- **Importance dynamique** — calcul automatique basé sur catégorie, longueur, contenu et source
-- **Rappel pondéré** — score = similarité (60%) + importance (30%) + récence (10%)
-- **Capture multi-messages** — regroupe les messages utilisateur consécutifs pour un contexte riche
-- **Hardening injection** — détection et filtrage des tentatives de prompt injection
-- **Rate limiting** — max 10 captures/heure (seulement les mémos > 0.8 d'importance si limite atteinte)
-- **Patterns français intelligents** : préférences, décisions, faits, entités, tech, SEO
-- **Catégorisation avancée** : preference, decision, entity, seo, technical, workflow, debug, fact
-- **Déduplication hybride** : vectorielle + similarité texte (seuil 85%)
-- **Hit tracking** : chaque recall match incrémente un compteur → les mémos utiles ne sont jamais purgés
-- **GC automatique** : purge les mémos > 30j avec importance < 0.5 et hitCount < 3
-- **Export/Import JSON** : backup/restore complet
-- **Migration automatique** : importe les mémos de la table memory-lancedb au premier démarrage
-- **Stats persistées** : sauvegardées dans `~/.openclaw/memory/memory-french-stats.json`
-- **Détection dynamique des dimensions** : adapte la taille des vecteurs au premier embedding
+Ce plugin :
+- **Capture automatiquement** les informations importantes depuis vos conversations
+- **Stocke les mémoires** dans une base de données vectorielle locale (LanceDB)
+- **Rappelle le contexte pertinent** au début de chaque conversation
+- **Survit aux mises à jour d'OpenClaw** (100% autonome)
+
+### Pourquoi Memory French ?
+
+Contrairement au plugin `memory-lancedb` intégré à OpenClaw, Memory French est :
+- **Autonome** : Gère sa propre DB, config et tools
+- **Persistant** : Survit aux mises à jour d'OpenClaw
+- **Intelligent** : Importance dynamique, rappel pondéré, détection d'injection
+- **Franco-centré** : Patterns optimisés pour contexte tech/web/SEO français
+- **Complet** : Export/import, GC, statistiques, CLI
+
+---
+
+## ✨ Fonctionnalités v2.1.0
+
+### 🧠 Importance Dynamique
+
+Chaque mémoire se voit attribuer un score d'importance (0-1) calculé dynamiquement selon :
+
+- **Catégorie** : entity (0.9), decision (0.85), preference (0.7), technical (0.65), etc.
+- **Source** : manual (0.9), agent_end (0.7), session_end (0.6), auto-capture (0.6)
+- **Longueur** : Bonus pour textes concis (20-200 caractères)
+- **Mots-clés** : Bonus pour "important", "essentiel", "toujours", "jamais"
+- **Densité** : Bonus pour noms propres, dates, nombres
+- **Pénalités** : Questions, expressions vagues ("je pense", "peut-être")
+
+### ⚖️ Rappel Pondéré (Weighted Recall)
+
+Le système de rappel combine trois facteurs pour classer les résultats :
+
+- **Similarité sémantique (60%)** : Proximité vectorielle
+- **Importance (30%)** : Score d'importance de la mémoire
+- **Récence (10%)** : Âge de la mémoire (décroissance sur 90 jours)
+
+Un pénalité de diversité est appliquée aux mémoires fréquemment rappelées pour éviter la redondance.
+
+### 📝 Capture Multi-Messages
+
+Les messages utilisateur consécutifs sont regroupés intelligemment :
+- Détection de similarité sémantique entre messages
+- Regroupement si > 30% de mots significatifs partagés
+- Capture du contexte complet plutôt que de fragments
+
+### 🛡️ Anti-Injection
+
+Protection avancée contre les prompt injections :
+- Détection de patterns d'injection (français + anglais)
+- Filtrage des commandes système (exec, eval, $_GET)
+- Échappement HTML du contenu injecté dans le prompt
+- Avertissement de suspicion dans les logs
+
+### 🚦 Rate Limiting
+
+Protection contre la surcharge :
+- Limite configurable (défaut : 10 captures/heure)
+- Dépassement autorisé pour mémoires haute importance (> 0.8)
+- Tracking en temps réel via CLI
+
+### 📊 Statistiques Persistées
+
+- Captures, rappels, erreurs comptabilisés
+- Persistance dans `~/.openclaw/memory/memory-french-stats.json`
+- Survit aux redémarrages
+- Log toutes les 5 minutes si activité
+
+### 🗑️ Garbage Collection Automatique
+
+- Intervalle configurable (défaut : 24h)
+- Supprime les mémoires : âge > 30 jours + importance < 0.5 + hitCount < 3
+- GC initial après 1 minute de démarrage
+
+### 💾 Export/Import JSON
+
+- Export complet avec métadonnées
+- Import intelligent avec déduplication
+- Format versionné pour compatibilité future
+
+### 🔄 Migration Automatique
+
+- Migration automatique depuis `memory-lancedb` (table `memories` → `memories_fr`)
+- Détection et préservation des mémoires existants
+- Déduplication lors de la migration
+
+---
 
 ## 📦 Installation
 
-### 1. Cloner
+### 1. Cloner le plugin
 
 ```bash
-git clone https://github.com/duan78/memory-french.git ~/.openclaw/workspace/plugins/memory-french
-cd ~/.openclaw/workspace/plugins/memory-french
+cd ~/.openclaw/workspace/plugins
+git clone https://github.com/duan78/memory-french.git
+cd memory-french
 npm install
 ```
 
 ### 2. Configurer OpenClaw
 
-Ajouter dans `openclaw.json` :
+Ajouter à votre fichier `openclaw.json` :
 
 ```json
 {
   "plugins": {
-    "load": {
-      "paths": [
-        "/root/.openclaw/workspace/plugins/memory-french"
-      ]
-    },
-    "allow": ["memory-french"],
     "entries": {
       "memory-french": {
         "config": {
+          "enabled": true,
           "embedding": {
-            "apiKey": "VOTRE_CLE_MISTRAL",
+            "apiKey": "votre-clé-mistral-ici",
             "model": "mistral-embed",
             "baseUrl": "https://api.mistral.ai/v1",
-            "dimensions": 256
+            "dimensions": 1024
           },
-          "enabled": true,
+          "dbPath": "~/.openclaw/memory/memory-french",
           "maxCapturePerTurn": 5,
+          "captureMinChars": 20,
+          "captureMaxChars": 3000,
           "recallLimit": 5,
+          "recallMinScore": 0.3,
           "enableStats": true,
           "gcInterval": 86400000,
-          "gcMaxAge": 2592000000
+          "gcMaxAge": 2592000000,
+          "rateLimitMaxPerHour": 10,
+          "enableWeightedRecall": true,
+          "enableDynamicImportance": true
         }
       }
     }
@@ -74,214 +144,482 @@ Ajouter dans `openclaw.json` :
 }
 ```
 
-### 3. Redémarrer
+### 3. Redémarrer OpenClaw
 
 ```bash
-openclaw gateway restart
+# Si OpenClaw est en cours d'exécution
+openclaw stop
+openclaw start
 ```
+
+---
 
 ## ⚙️ Configuration
 
-### Paramètres
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `enabled` | boolean | `true` | Active ou désactive le plugin |
+| `embedding.apiKey` | string | **requis** | Clé API Mistral (ou via `MISTRAL_API_KEY`) |
+| `embedding.model` | string | `"mistral-embed"` | Modèle d'embeddings |
+| `embedding.baseUrl` | string | `"https://api.mistral.ai/v1"` | URL base API |
+| `embedding.dimensions` | number | `1024` | Dimension des vecteurs |
+| `dbPath` | string | `"~/.openclaw/memory/memory-french"` | Chemin base LanceDB |
+| `maxCapturePerTurn` | number | `5` | Max captures par tour |
+| `captureMinChars` | number | `20` | Longueur min pour capture |
+| `captureMaxChars` | number | `3000` | Longueur max pour capture |
+| `recallLimit` | number | `5` | Max mémoires rappelées |
+| `recallMinScore` | number | `0.3` | Score min similarité (0-1) |
+| `enableStats` | boolean | `true` | Active statistiques/logs |
+| `gcInterval` | number | `86400000` | Intervalle GC en ms (24h) |
+| `gcMaxAge` | number | `2592000000` | Âge max mémoires en ms (30j) |
+| `rateLimitMaxPerHour` | number | `10` | Max captures par heure |
+| `enableWeightedRecall` | boolean | `true` | Active rappel pondéré |
+| `enableDynamicImportance` | boolean | `true` | Active importance dynamique |
 
-| Paramètre | Défaut | Description |
-|-----------|--------|-------------|
-| `enabled` | `true` | Active/désactive le plugin |
-| `embedding.apiKey` | requis | Clé API Mistral |
-| `embedding.model` | `mistral-embed` | Modèle d'embeddings |
-| `embedding.baseUrl` | `https://api.mistral.ai/v1` | URL de l'API |
-| `embedding.dimensions` | `1024` | Dimensions des vecteurs (auto-détecté) |
-| `dbPath` | `~/.openclaw/memory/memory-french` | Chemin de la DB |
-| `maxCapturePerTurn` | `5` | Max mémos capturés par tour |
-| `captureMinChars` | `20` | Longueur min pour capture |
-| `captureMaxChars` | `3000` | Longueur max pour capture |
-| `recallLimit` | `5` | Max mémos rappelés |
-| `recallMinScore` | `0.3` | Score min de similarité |
-| `enableStats` | `true` | Active les statistiques |
-| `gcInterval` | `86400000` (24h) | Intervalle GC automatique |
-| `gcMaxAge` | `2592000000` (30j) | Âge max avant purge GC |
-| `rateLimitMaxPerHour` | `10` | Max captures par heure |
-| `enableWeightedRecall` | `true` | Active le rappel pondéré |
-| `enableDynamicImportance` | `true` | Active le calcul dynamique d'importance |
+---
 
-## 🎯 Importance Dynamique
+## 🔧 Tools
 
-L'importance est calculée automatiquement selon plusieurs facteurs :
-
-**Base par catégorie :**
-- entity → 0.9
-- decision → 0.85
-- preference → 0.7
-- technical → 0.65
-- seo → 0.6
-- workflow → 0.6
-- fact → 0.5
-- debug → 0.4
-
-**Ajustements :**
-- Longueur optimale (20-200 car.) → +0.05
-- Mots-clés (important, essentiel, toujours) → +0.1
-- Présence d'entités (noms, dates) → +0.05
-- Questions → -0.2
-- Expressions vagues (je pense) → -0.15
-
-**Par source :**
-- manual → 0.9
-- agent_end → 0.7
-- session_end → 0.6
-
-## 🧠 Tools
+Le plugin enregistre 6 tools utilisables par l'agent :
 
 ### `memory_store`
-Stocke un mémo manuellement.
+Stocke manuellement un mémo en mémoire.
+
+**Paramètres :**
+- `text` (string, requis) : Texte à stocker
+- `importance` (number, optionnel) : Score 0-1 (défaut : auto-calculé)
+- `category` (string, optionnel) : Catégorie (preference, decision, entity, seo, technical, workflow, debug, fact)
+
+**Exemple :**
 ```
-memory_store({ text: "Arnaud préfère Rust pour les crawlers", importance: 0.9 })
+Utilisateur : Note que je préfère travailler avec TypeScript plutôt que JavaScript
+→ L'agent appelle memory_store avec le texte
+→ Résultat : "Stored: 'je préfère travailler avec TypeScript...' (id: xxx, category: preference, importance: 0.75)"
 ```
 
 ### `memory_recall`
-Recherche des mémos par similarité sémantique.
+Recherche des mémoires par similarité sémantique avec scoring pondéré.
+
+**Paramètres :**
+- `query` (string, requis) : Recherche
+- `limit` (number, optionnel) : Max résultats (défaut : 5)
+
+**Exemple :**
 ```
-memory_recall({ query: "langage préféré", limit: 5 })
+Utilisateur : Quelles sont mes préférences techniques ?
+→ L'agent appelle memory_recall avec "préférences techniques"
+→ Résultat : "Found 3 memories: 1. [preference] je préfère TypeScript... (score: 85%, importance: 75%)"
 ```
 
 ### `memory_forget`
-Supprime un mémo par ID ou par query.
+Supprime un mémo par ID ou par requête.
+
+**Paramètres :**
+- `memoryId` (string, optionnel) : ID spécifique à supprimer
+- `query` (string, optionnel) : Recherche pour trouver les mémoires à supprimer
+
+**Exemple :**
 ```
-memory_forget({ memoryId: "uuid..." })
-memory_forget({ query: "vieux mot de passe" })
+Utilisateur : Oublie tout ce que je t'ai dit sur mon ancien projet
+→ L'agent appelle memory_forget avec query="ancien projet"
+→ Résultat : "Deleted 3 memories matching query."
 ```
 
 ### `memory_export`
-Exporte tous les mémos en JSON.
+Exporte toutes les mémoires vers un fichier JSON.
+
+**Paramètres :**
+- `filePath` (string, optionnel) : Chemin personnalisé (défaut : auto-généré)
+
+**Exemple :**
 ```
-memory_export({ filePath: "/chemin/backup.json" })
+→ Export vers ~/.openclaw/memory/memory-french-backup-1234567890.json
 ```
 
 ### `memory_import`
-Importe des mémos depuis un JSON.
+Importe des mémoires depuis un fichier JSON.
+
+**Paramètres :**
+- `filePath` (string, requis) : Chemin du fichier JSON
+
+**Exemple :**
 ```
-memory_import({ filePath: "/chemin/backup.json" })
+→ Importe depuis le fichier, déduplique, et compte les importés/skippés
 ```
 
 ### `memory_gc`
-Lance le garbage collection manuellement.
+Exécute le garbage collection manuellement.
+
+**Paramètres :**
+- `maxAge` (number, optionnel) : Âge max en ms (défaut : 30 jours)
+- `minImportance` (number, optionnel) : Importance min (défaut : 0.5)
+- `minHitCount` (number, optionnel) : Hit count min (défaut : 3)
+
+**Exemple :**
 ```
-memory_gc({ maxAge: 2592000000, minImportance: 0.5, minHitCount: 3 })
+→ Supprime les vieilles mémoires peu importantes et peu utilisées
 ```
+
+---
 
 ## 💻 CLI Commands
 
+Le plugin enregistre 6 commandes CLI :
+
+### `openclaw memory-fr list`
+Liste les mémoires stockées avec filtres optionnels.
+
+**Options :**
+- `--category` : Filtrer par catégorie
+- `--limit` : Max résultats (défaut : 20)
+- `--json` : Output JSON
+
+**Exemple :**
 ```bash
-# Lister les mémos
-openclaw memory-fr list [--category preference] [--limit 20] [--json]
+openclaw memory-fr list --category preference --limit 10
+openclaw memory-fr list --json
+```
 
-# Chercher des mémos
-openclaw memory-fr search "langage préféré" [--limit 10]
+### `openclaw memory-fr search <query>`
+Recherche des mémoires par similarité sémantique.
 
-# Afficher les statistiques
-openclaw memory-fr stats
+**Options :**
+- `--limit` : Max résultats (défaut : 10)
 
-# Exporter en JSON
-openclaw memory-fr export [--path /chemin/backup.json]
+**Exemple :**
+```bash
+openclaw memory-fr search "TypeScript preferences"
+openclaw memory-fr search "SEO strategy" --limit 5
+```
 
-# Lancer le GC manuellement
-openclaw memory-fr gc [--max-age 30] [--min-importance 0.5] [--min-hit-count 3]
+### `openclaw memory-fr stats`
+Affiche les statistiques d'utilisation.
 
-# Supprimer tous les mémos (avec confirmation)
+**Exemple :**
+```bash
+$ openclaw memory-fr stats
+Memory Statistics:
+------------------
+Total memories: 42
+Captures: 15
+Recalls: 28
+Errors: 0
+Uptime: 45 minutes
+Rate limit: 3/hour (max: 10)
+```
+
+### `openclaw memory-fr export [path]`
+Exporte les mémoires vers un fichier JSON.
+
+**Options :**
+- `--path` : Chemin personnalisé (défaut : auto-généré)
+
+**Exemple :**
+```bash
+openclaw memory-fr export
+openclaw memory-fr export --path ~/backup/memories.json
+```
+
+### `openclaw memory-fr gc`
+Exécute le garbage collection.
+
+**Options :**
+- `--maxAge` : Âge max en jours (défaut : 30)
+- `--minImportance` : Importance min (défaut : 0.5)
+- `--minHitCount` : Hit count min (défaut : 3)
+
+**Exemple :**
+```bash
+openclaw memory-fr gc
+openclaw memory-fr gc --maxAge 60 --minImportance 0.3
+```
+
+### `openclaw memory-fr clear`
+Supprime toutes les mémoires (requiert confirmation).
+
+**Options :**
+- `--confirm=true` : Confirmer la suppression
+
+**Exemple :**
+```bash
 openclaw memory-fr clear --confirm=true
+⚠️  This action cannot be undone!
+Cleared 42 memories from the database.
 ```
 
-## 🔄 Hooks
+---
 
-### `before_agent_start` — Auto-recall
-Avant chaque conversation, injecte les mémos pertinents dans le contexte.
+## 🪝 Hooks
 
-### `agent_end` — Auto-capture
-Capture les faits des messages utilisateur quand la conversation se termine normalement.
+Le plugin utilise 3 hooks OpenClaw :
 
-### `session_end` — Crash recovery
-Capture les mémos même si l'agent crash ou est killed. Lit le fichier transcript de la session.
+### `before_agent_start`
+Injecte le contexte pertinent avant le début de l'agent.
 
-## 🗄️ Schéma étendu
+- Cherche des mémoires similaires au prompt utilisateur
+- Injecte les résultats dans `<relevant-memories>` avec avertissement sécurité
+- Incrémente les hitCount des mémoires rappelées
+- Log le nombre de mémoires injectées
 
-| Champ | Type | Description |
-|-------|------|-------------|
-| `id` | string | UUID unique |
-| `text` | string | Contenu du mémo |
-| `vector` | float[] | Vecteur d'embedding |
-| `importance` | float | Score 0.0 - 1.0 |
-| `category` | string | preference/decision/entity/seo/technical/workflow/debug/fact |
-| `createdAt` | number | Timestamp de création |
-| `updatedAt` | number | Timestamp de dernière mise à jour |
-| `source` | string | auto-capture/agent_end/session_end/manual |
-| `hitCount` | number | Nombre de fois rappelé |
+### `agent_end`
+Capture automatique des faits depuis les messages utilisateur.
 
-## 🧹 Garbage Collection
+- Ne s'exécute que si l'agent a réussi (`success: true`)
+- Groupe les messages utilisateur consécutifs
+- Applique les filtres (triggers, injection, rate limit)
+- Calcule l'importance dynamique
+- Déduplique avant stockage
+- Log le nombre de captures
 
-Le GC tourne automatiquement (défaut: toutes les 24h) et supprime les mémos qui :
-- Sont plus vieux que 30 jours
-- Ont une importance < 0.5
-- Ont été rappelés moins de 3 fois (hitCount < 3)
+### `session_end`
+Capture de récupération en cas de crash/kill.
 
-Les mémos utiles (hitCount élevé) ne sont jamais purgés.
+- Lit le fichier de session JSON
+- Extrait les messages de la conversation
+- Applique le même processus que `agent_end`
+- Permet de récupérer les mémoires même si OpenClaw crash
 
-## 📦 Export/Import
+---
 
-```bash
-# Export automatique (via tool)
-# → ~/.openclaw/memory/memory-french-backup-{timestamp}.json
+## 🗄️ Schéma de Base de Données
 
-# Import
-memory_import({ filePath: "~/.openclaw/memory/memory-french-backup-xxx.json" })
+La base LanceDB utilise le schéma étendu suivant :
+
+```typescript
+{
+  id: string;           // UUID unique
+  text: string;         // Texte de la mémoire
+  vector: number[];     // Embedding Mistral (1024 dim)
+  importance: number;   // Score 0-1 (calculé dynamiquement)
+  category: string;     // Catégorie (preference, decision, etc.)
+  createdAt: number;    // Timestamp création
+  updatedAt: number;    // Timestamp dernière mise à jour
+  source: string;       // Source (manual, agent_end, session_end, auto-capture)
+  hitCount: number;     // Nombre de fois rappelée
+}
 ```
+
+**Table :** `memories_fr` (anciennement `memories`)
+
+**Dimensions vecteur :** 1024 (Mistral Embed)
+
+---
+
+## 🏷️ Catégories et Importances
+
+| Catégorie | Importance | Description | Exemple |
+|-----------|------------|-------------|---------|
+| `entity` | 0.9 | Personnes, contacts, entreprises | "Jean Dupont est mon client" |
+| `decision` | 0.85 | Décisions prises | "On a décidé d'utiliser PostgreSQL" |
+| `preference` | 0.7 | Préférences, choix | "Je préfère TypeScript" |
+| `technical` | 0.65 | Config technique, infra | "Le serveur est sur nginx" |
+| `seo` | 0.6 | SEO, marketing, contenu | "Mots-clés : "voyage italie"" |
+| `workflow` | 0.6 | Processus, méthodes | "Toujours tester avant déployer" |
+| `debug` | 0.4 | Erreurs, bugs | "Erreur 404 sur /api/users" |
+| `fact` | 0.5 | Faits généraux | "Paris est la capitale de France" |
+
+---
+
+## 🧬 Garbage Collection
+
+Le GC automatique supprime les mémoires selon 3 critères :
+
+1. **Âge** : Plus de 30 jours (configurable)
+2. **Importance** : Inférieure à 0.5
+3. **HitCount** : Moins de 3 rappels
+
+**Fréquence :** Toutes les 24h (configurable)
+
+**GC initial :** 1 minute après démarrage
+
+Le GC préserve les mémoires importantes ou fréquemment utilisées.
+
+---
+
+## 📥 Export/Import
+
+### Format Export JSON
+
+```json
+{
+  "version": "2.0.0",
+  "exportedAt": 1234567890000,
+  "count": 42,
+  "memories": [
+    {
+      "id": "uuid",
+      "text": "Texte de la mémoire",
+      "importance": 0.75,
+      "category": "preference",
+      "createdAt": 1234567890000,
+      "updatedAt": 1234567890000,
+      "source": "manual",
+      "hitCount": 5
+    }
+  ]
+}
+```
+
+### Import Intelligent
+
+- Déduplication par similarité de texte (> 85% = skip)
+- Régénération des embeddings à l'import
+- Préservation des métadonnées originales
+- Rapport d'import (importés/skippés)
+
+---
 
 ## 🔄 Migration depuis memory-lancedb
 
-Au premier démarrage, si la table `memories` (memory-lancedb) existe dans la même DB, les mémos sont automatiquement migrés vers `memories_fr`. Le check de doublon par similarité texte évite les répétitions.
+La migration est **automatique** au premier démarrage :
 
-## 📊 Statistiques
+1. Détection de l'ancienne table `memories`
+2. Lecture des entrées existantes
+3. Déduplication avec nouvelles mémoires
+4. Stockage dans nouvelle table `memories_fr`
+5. Log du nombre de mémoires migrées
 
-Persistées dans `~/.openclaw/memory/memory-french-stats.json` :
-- Nombre de captures
-- Nombre de recalls
-- Nombre d'erreurs
-- Uptime
+**Note :** L'ancienne table n'est pas supprimée (sécurité)
 
-Logs toutes les 5 minutes si activé.
+---
 
-## 🛡️ Compatibilité MAJ OpenClaw
+## 📈 Statistiques
 
-Ce plugin est **100% indépendant** :
-- Pas dans le dossier d'extensions d'OpenClaw
-- Propre DB (`memories_fr`), pas de conflit
-- Propre config, pas de dépendance
-- Survit à toutes les MAJ
+Les statistiques sont persistées dans `~/.openclaw/memory/memory-french-stats.json` :
 
-## 📁 Structure
+```json
+{
+  "captures": 42,
+  "recalls": 128,
+  "errors": 0,
+  "lastReset": 1234567890000
+}
+```
+
+- Survit aux redémarrages
+- Réinitialisable via code
+- Log toutes les 5 minutes si activité
+- Accessible via CLI `memory-fr stats`
+
+---
+
+## 🔄 Compatibilité MAJ OpenClaw
+
+Memory French est **100% autonome** et **survit aux mises à jour OpenClaw** :
+
+- ✅ Base de données indépendante (`~/.openclaw/memory/memory-french`)
+- ✅ Configuration propre dans `openclaw.json`
+- ✅ Tools enregistrés dynamiquement
+- ✅ Hooks enregistrés via API plugin
+- ✅ Pas de dépendance au code interne d'OpenClaw
+
+**Contrairement à `memory-lancedb`** qui est intégré au core et peut être modifié/réinitialisé lors des mises à jour.
+
+---
+
+## 📂 Structure du Code
 
 ```
 memory-french/
-├── index.ts              # Code principal
-├── openclaw.plugin.json  # Manifest + configSchema
-├── package.json          # Dépendances
-├── README.md             # Ce fichier
-└── ROADMAP.md            # Feuille de route
+├── index.ts                 # Plugin principal (1876 lignes)
+├── package.json             # Dépendances npm
+├── openclaw.plugin.json     # Metadata plugin
+├── README.md                # Documentation (ce fichier)
+└── test.ts                  # Tests unitaires
 ```
 
-## 📝 Dépendances
+**Sections principales dans `index.ts` :**
+1. Types & Config
+2. Category/Source Importance Weights
+3. Prompt Injection Patterns
+4. French Triggers (patterns enrichis)
+5. Dynamic Importance Calculation
+6. Rate Limiting Tracker
+7. Multi-Message Context Grouping
+8. Text Processing Utilities
+9. LanceDB Wrapper
+10. Embeddings Client
+11. Statistics Tracker
+12. Export/Import Functions
+13. Migration Function
+14. Plugin Definition (register)
 
-- `openai` — SDK OpenAI-compatible (pour l'API Mistral)
-- `@lancedb/lancedb` — Base de données vectorielle
-- `@sinclair/typebox` — Types pour les tools
+---
+
+## 🌍 Section Multilingue (Préparation v2.2.0)
+
+La v2.2.0 introduira le support multilingue avec le renommage en **MemoryClaw** :
+
+### Plan v2.2.0
+
+- **Architecture multilingue** : Dossier `locales/` avec patterns par langue
+- **Locales supportées** : Français (principal), Anglais, Espagnol, Allemand
+- **Détection automatique** : Heuristiques pour détecter la langue des messages
+- **Mapping multilingue** : Catégories communes, patterns spécifiques par langue
+- **Renommage plugin** : `memory-french` → `memory-claw`
+- **Config locales** : Paramètre `locales: string[]` pour sélectionner les langues actives
+
+### Fonctionnement prévu
+
+```typescript
+// Détection langue
+const lang = detectLanguage("Je préfère TypeScript"); // "fr"
+const lang = detectLanguage("I prefer TypeScript");   // "en"
+
+// Chargement patterns
+const patterns = loadLocales(["fr", "en"]);
+
+// Catégorisation multilingue
+const category = detectCategory("Je préfère...", "fr"); // "preference"
+const category = detectCategory("I prefer...", "en");   // "preference"
+```
+
+---
+
+## 🚀 Version
+
+**Version actuelle :** 2.1.0
+
+**Auteur :** duan78
+
+**Repository :** https://github.com/duan78/memory-french
+
+---
+
+## 📝 Changelog
+
+### v2.1.0 (2025)
+- ✨ Importance dynamique basée sur catégorie, longueur, contenu
+- ⚖️ Rappel pondéré (similarité + importance + récence)
+- 📝 Capture multi-messages avec regroupement intelligent
+- 🛡️ Hardening anti-injection (patterns avancés)
+- 🚦 Rate limiting configurable
+- 💻 6 CLI commands (list, search, stats, export, gc, clear)
+- 📊 Statistiques persistées
+- 🗑️ GC automatique configurable
+- 💾 Export/Import JSON versionné
+
+### v2.0.0
+- 🎉 Plugin 100% autonome (DB, config, tools indépendants)
+- 🗄️ Schéma DB étendu (importance, category, source, hitCount)
+- 🪝 3 Hooks (before_agent_start, agent_end, session_end)
+- 🔄 Migration automatique depuis memory-lancedb
+- 📈 Statistiques persistées
+- 🗑️ Garbage collection
+- 💾 Export/Import JSON
+
+---
+
+## 🤝 Contribution
+
+Contributions welcome ! N'hésitez pas à ouvrir des issues ou des PRs.
+
+---
 
 ## 📄 Licence
 
 ISC
 
-## 👨‍💻 Auteur
-
-**duan78** — Assistant IA d'Arnaud (expert web/SEO, France)
-
 ---
 
-*Version 2.1.0 - 2026-03-18*
+**Memory French v2.1.0 — Your memory, enhanced.** 🧠✨
