@@ -220,6 +220,7 @@ const LOW_VALUE_PATTERNS = [
 // ============================================================================
 
 function normalizeText(text: string): string {
+  if (!text) return "";
   return text
     .trim()
     .replace(/\s+/g, " ")
@@ -245,6 +246,7 @@ function calculateTextSimilarity(text1: string, text2: string): number {
 }
 
 function shouldCapture(text: string, minChars: number, maxChars: number): boolean {
+  if (!text || typeof text !== "string") return false;
   const normalized = normalizeText(text);
 
   if (!normalized || normalized.length < minChars || normalized.length > maxChars) {
@@ -267,6 +269,7 @@ function shouldCapture(text: string, minChars: number, maxChars: number): boolea
 }
 
 function detectCategory(text: string): string {
+  if (!text || typeof text !== "string") return "fact";
   const lower = text.toLowerCase();
 
   if (/préfère|aime|déteste|adore|veux|choisis|évit|pas de|plutôt/i.test(lower)) {
@@ -301,6 +304,7 @@ function detectCategory(text: string): string {
 }
 
 function escapeForPrompt(text: string): string {
+  if (!text || typeof text !== "string") return "";
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -1027,7 +1031,7 @@ const plugin = {
     // ========================================================================
 
     api.on("before_agent_start", async (event) => {
-      if (!event.prompt || event.prompt.length < 5) return;
+      if (!event || !event.prompt || typeof event.prompt !== "string" || event.prompt.length < 5) return;
 
       try {
         const vector = await embeddings.embed(event.prompt);
@@ -1149,7 +1153,7 @@ const plugin = {
     };
 
     api.on("agent_end", async (event) => {
-      if (!event.success || !event.messages || event.messages.length === 0)
+      if (!event || !event.success || !event.messages || !Array.isArray(event.messages) || event.messages.length === 0)
         return;
 
       try {
@@ -1165,8 +1169,9 @@ const plugin = {
     // ========================================================================
 
     api.on("session_end", async (event) => {
+      if (!event) return;
       const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
-      if (!sessionFile) return;
+      if (!sessionFile || typeof sessionFile !== "string") return;
 
       try {
         const { readFile } = await import("node:fs/promises");
@@ -1240,8 +1245,13 @@ const plugin = {
 
     // Register service with cleanup for proper shutdown
     api.registerService({
-      name: "memory-french",
-      stop() {
+      id: "memory-french",
+      start: () => {
+        api.logger.info(
+          `memory-french: started (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim})`
+        );
+      },
+      stop: () => {
         if (statsInterval) {
           clearInterval(statsInterval);
           statsInterval = null;
@@ -1250,6 +1260,7 @@ const plugin = {
           clearInterval(gcInterval);
           gcInterval = null;
         }
+        api.logger.info("memory-french: stopped");
       },
     });
   },
