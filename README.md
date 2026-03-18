@@ -207,7 +207,7 @@ openclaw start
 
 The plugin registers 6 tools that can be used by the AI agent:
 
-### memory_store
+### mclaw_store
 
 Manually store a memo in memory.
 
@@ -219,11 +219,11 @@ Manually store a memo in memory.
 **Example:**
 ```
 User: Note that I prefer working with TypeScript rather than JavaScript
-→ Agent calls memory_store with the text
+→ Agent calls mclaw_store with the text
 → Result: "Stored: 'I prefer working with TypeScript...' (id: xxx, category: preference, importance: 0.75)"
 ```
 
-### memory_recall
+### mclaw_recall
 
 Search stored memories by semantic similarity with weighted scoring.
 
@@ -234,11 +234,11 @@ Search stored memories by semantic similarity with weighted scoring.
 **Example:**
 ```
 User: What are my technical preferences?
-→ Agent calls memory_recall with "technical preferences"
+→ Agent calls mclaw_recall with "technical preferences"
 → Result: "Found 3 memories: 1. [preference] I prefer TypeScript... (score: 85%, importance: 75%)"
 ```
 
-### memory_forget
+### mclaw_forget
 
 Delete a stored memory by ID or by query.
 
@@ -249,11 +249,11 @@ Delete a stored memory by ID or by query.
 **Example:**
 ```
 User: Forget everything I told you about my old project
-→ Agent calls memory_forget with query="old project"
+→ Agent calls mclaw_forget with query="old project"
 → Result: "Deleted 3 memories matching query."
 ```
 
-### memory_export
+### mclaw_export
 
 Export all stored memories to a JSON file for backup.
 
@@ -265,7 +265,7 @@ Export all stored memories to a JSON file for backup.
 → Exports to ~/.openclaw/memory/memory-claw-backup-1234567890.json
 ```
 
-### memory_import
+### mclaw_import
 
 Import memories from a JSON file.
 
@@ -277,7 +277,7 @@ Import memories from a JSON file.
 → Imports from file, deduplicates, and reports imported/skipped count
 ```
 
-### memory_gc
+### mclaw_gc
 
 Run garbage collection to remove old, low-importance memories.
 
@@ -551,7 +551,7 @@ Run GC manually via tool or CLI:
 openclaw memory-claw gc --maxAge 60 --minImportance 0.3
 
 # Via tool (agent can call)
-memory_gc with maxAge=5184000000, minImportance=0.3, minHitCount=3
+mclaw_gc with maxAge=5184000000, minImportance=0.3, minHitCount=3
 ```
 
 ---
