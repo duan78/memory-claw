@@ -11,20 +11,12 @@
  * - `before_agent_start`: Injects relevant context
  *
  * Tools:
- * - `memory_store`: Manually store a memo
- * - `memory_recall`: Search stored memories
- * - `memory_forget`: Delete a memo
- * - `memory_export`: Export memories to JSON
- * - `memory_import`: Import memories from JSON
- * - `memory_gc`: Run garbage collection
- *
- * CLI Commands:
- * - `openclaw memory-claw list`: List stored memories
- * - `openclaw memory-claw search <query>`: Search memories
- * - `openclaw memory-claw stats`: Display statistics
- * - `openclaw memory-claw export [path]`: Export to JSON
- * - `openclaw memory-claw gc`: Run garbage collection
- * - `openclaw memory-claw clear`: Delete all memories (with confirmation)
+ * - `mclaw_store`: Manually store a memo
+ * - `mclaw_recall`: Search stored memories
+ * - `mclaw_forget`: Delete a memo
+ * - `mclaw_export`: Export memories to JSON
+ * - `mclaw_import`: Import memories from JSON
+ * - `mclaw_gc`: Run garbage collection
  *
  * @version 2.2.0
  * @author duan78
@@ -117,7 +109,7 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   rateLimitMaxPerHour: 10,
   enableWeightedRecall: true,
   enableDynamicImportance: true,
-  locales: ["fr", "en"], // v2.2.0: Default active locales
+  locales: ["fr", "en", "es", "de"], // v2.2.0: Default active locales (all supported languages)
 };
 
 const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-claw");
@@ -1310,7 +1302,7 @@ const plugin = {
     }
 
     const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
-    const vectorDim = embedding.dimensions || 1024;
+    const vectorDim = embedding.dimensions || 256; // Default to Mistral's dimension
 
     const db = new MemoryDB(dbPath, vectorDim);
     const embeddings = new Embeddings(
@@ -1344,8 +1336,8 @@ const plugin = {
 
     api.registerTool(
       {
-        name: "memory_store",
-        label: "Memory Store",
+        name: "mclaw_store",
+        label: "Memory Claw Store",
         description: "Store a memo in memory for future recall. Useful for capturing important facts, preferences, decisions, or context that should be remembered across conversations.",
         parameters: Type.Object({
           text: Type.String({ description: "The text content to store in memory" }),
@@ -1398,13 +1390,13 @@ const plugin = {
           }
         },
       },
-      { name: "memory_store" },
+      { name: "mclaw_store" },
     );
 
     api.registerTool(
       {
-        name: "memory_recall",
-        label: "Memory Recall",
+        name: "mclaw_recall",
+        label: "Memory Claw Recall",
         description: "Search and retrieve stored memories by semantic similarity with weighted scoring (similarity + importance + recency).",
         parameters: Type.Object({
           query: Type.String({ description: "Search query to find relevant memories" }),
@@ -1433,13 +1425,13 @@ const plugin = {
           }
         },
       },
-      { name: "memory_recall" },
+      { name: "mclaw_recall" },
     );
 
     api.registerTool(
       {
-        name: "memory_forget",
-        label: "Memory Forget",
+        name: "mclaw_forget",
+        label: "Memory Claw Forget",
         description: "Delete a stored memory by ID or by query.",
         parameters: Type.Object({
           memoryId: Type.Optional(Type.String({ description: "Specific memory ID to delete" })),
@@ -1463,13 +1455,13 @@ const plugin = {
           }
         },
       },
-      { name: "memory_forget" },
+      { name: "mclaw_forget" },
     );
 
     api.registerTool(
       {
-        name: "memory_export",
-        label: "Memory Export",
+        name: "mclaw_export",
+        label: "Memory Claw Export",
         description: "Export all stored memories to a JSON file for backup.",
         parameters: Type.Object({
           filePath: Type.Optional(Type.String({ description: "Custom file path for export" })),
@@ -1485,13 +1477,13 @@ const plugin = {
           }
         },
       },
-      { name: "memory_export" },
+      { name: "mclaw_export" },
     );
 
     api.registerTool(
       {
-        name: "memory_import",
-        label: "Memory Import",
+        name: "mclaw_import",
+        label: "Memory Claw Import",
         description: "Import memories from a JSON file.",
         parameters: Type.Object({
           filePath: Type.String({ description: "Path to the JSON file to import" }),
@@ -1507,13 +1499,13 @@ const plugin = {
           }
         },
       },
-      { name: "memory_import" },
+      { name: "mclaw_import" },
     );
 
     api.registerTool(
       {
-        name: "memory_gc",
-        label: "Memory GC",
+        name: "mclaw_gc",
+        label: "Memory Claw GC",
         description: "Run garbage collection to remove old, low-importance memories.",
         parameters: Type.Object({
           maxAge: Type.Optional(Type.Number({ description: "Max age in ms (default: 30 days)" })),
@@ -1531,227 +1523,8 @@ const plugin = {
           }
         },
       },
-      { name: "memory_gc" },
+      { name: "mclaw_gc" },
     );
-
-    // ========================================================================
-    // CLI Commands Registration
-    // ========================================================================
-
-    // Register CLI command: list memories
-    api.registerCli?.({
-      name: "memory-claw list",
-      description: "List stored memories with optional filtering",
-      parameters: Type.Object({
-        category: Type.Optional(Type.String({ description: "Filter by category" })),
-        limit: Type.Optional(Type.Number({ description: "Max results (default: 20)" })),
-        json: Type.Optional(Type.Boolean({ description: "Output as JSON (default: false)" })),
-      }),
-      async execute(params) {
-        try {
-          const { category, limit = 20, json: outputJson = false } = params as { category?: string; limit?: number; json?: boolean };
-          const allMemories = await db.getAll();
-
-          let filtered = allMemories;
-          if (category) {
-            filtered = allMemories.filter((m) => m.category === category);
-          }
-
-          const sliced = filtered.slice(0, limit);
-
-          if (outputJson) {
-            return {
-              exitCode: 0,
-              stdout: JSON.stringify(sliced.map((m) => ({
-                id: m.id,
-                text: m.text,
-                category: m.category,
-                importance: m.importance,
-                source: m.source,
-                hitCount: m.hitCount,
-                createdAt: new Date(m.createdAt).toISOString(),
-              })), null, 2),
-            };
-          }
-
-          const lines = sliced.map((m, i) =>
-            `${i + 1}. [${m.category}] ${m.text.slice(0, 80)}${m.text.length > 80 ? "..." : ""}\n   Importance: ${(m.importance * 100).toFixed(0)}% | Hits: ${m.hitCount} | Source: ${m.source}`
-          );
-          return {
-            exitCode: 0,
-            stdout: `Found ${sliced.length} memories:\n\n${lines.join("\n\n")}`,
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
-
-    // Register CLI command: search memories
-    api.registerCli?.({
-      name: "memory-claw search",
-      description: "Search memories by query",
-      parameters: Type.Object({
-        query: Type.String({ description: "Search query" }),
-        limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
-      }),
-      async execute(params) {
-        try {
-          const { query, limit = 10 } = params as { query: string; limit?: number };
-          const vector = await embeddings.embed(query);
-          const results = await db.search(vector, limit, 0.2, true);
-
-          // Increment hit counts for recalled memories
-          for (const result of results) {
-            await db.incrementHitCount(result.id);
-          }
-
-          const lines = results.map((r, i) =>
-            `${i + 1}. [${r.category}] ${r.text}\n   Score: ${(r.score * 100).toFixed(0)}% | Importance: ${(r.importance * 100).toFixed(0)}% | Hits: ${r.hitCount}`
-          );
-
-          return {
-            exitCode: 0,
-            stdout: `Found ${results.length} memories matching "${query}":\n\n${lines.join("\n\n")}`,
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
-
-    // Register CLI command: display statistics
-    api.registerCli?.({
-      name: "memory-claw stats",
-      description: "Display memory statistics",
-      parameters: Type.Object({}),
-      async execute() {
-        try {
-          const count = await db.count();
-          const statsData = stats.getStats();
-
-          const lines = [
-            `Memory Statistics:`,
-            `------------------`,
-            `Total memories: ${count}`,
-            `Captures: ${statsData.captures}`,
-            `Recalls: ${statsData.recalls}`,
-            `Errors: ${statsData.errors}`,
-            `Uptime: ${Math.floor(statsData.uptime / 60)} minutes`,
-            `Rate limit: ${rateLimiter.getCaptureCount()}/hour (max: 10)`,
-          ];
-
-          return {
-            exitCode: 0,
-            stdout: lines.join("\n"),
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
-
-    // Register CLI command: export memories
-    api.registerCli?.({
-      name: "memory-claw export",
-      description: "Export memories to JSON file",
-      parameters: Type.Object({
-        path: Type.Optional(Type.String({ description: "Output file path (default: auto-generated)" })),
-      }),
-      async execute(params) {
-        try {
-          const { path: customPath } = params as { path?: string };
-          const outputPath = await exportToJson(db, customPath);
-
-          return {
-            exitCode: 0,
-            stdout: `Exported memories to: ${outputPath}`,
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
-
-    // Register CLI command: run garbage collection
-    api.registerCli?.({
-      name: "memory-claw gc",
-      description: "Run garbage collection to remove old, low-importance memories",
-      parameters: Type.Object({
-        maxAge: Type.Optional(Type.Number({ description: "Max age in days (default: 30)" })),
-        minImportance: Type.Optional(Type.Number({ description: "Min importance (default: 0.5)" })),
-        minHitCount: Type.Optional(Type.Number({ description: "Min hit count (default: 3)" })),
-      }),
-      async execute(params) {
-        try {
-          const { maxAge: maxAgeDays = 30, minImportance = 0.5, minHitCount = 3 } = params as { maxAge?: number; minImportance?: number; minHitCount?: number };
-          const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
-
-          const deleted = await db.garbageCollect(maxAgeMs, minImportance, minHitCount);
-
-          return {
-            exitCode: 0,
-            stdout: `Garbage collection completed: ${deleted} memories removed.`,
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
-
-    // Register CLI command: clear all memories
-    api.registerCli?.({
-      name: "memory-claw clear",
-      description: "Delete all stored memories (requires confirmation)",
-      parameters: Type.Object({
-        confirm: Type.Optional(Type.Boolean({ description: "Confirm deletion (must be true)" })),
-      }),
-      async execute(params) {
-        try {
-          const { confirm } = params as { confirm?: boolean };
-
-          if (!confirm) {
-            return {
-              exitCode: 1,
-              stderr: "Error: Must set --confirm=true to delete all memories. This action cannot be undone!",
-            };
-          }
-
-          const allMemories = await db.getAll();
-          let deleted = 0;
-
-          for (const memory of allMemories) {
-            await db.deleteById(memory.id);
-            deleted++;
-          }
-
-          return {
-            exitCode: 0,
-            stdout: `Cleared ${deleted} memories from the database.`,
-          };
-        } catch (error) {
-          return {
-            exitCode: 1,
-            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          };
-        }
-      },
-    });
 
     // ========================================================================
     // Hook: Auto-recall - Inject relevant memories before agent starts
