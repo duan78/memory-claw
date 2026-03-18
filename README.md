@@ -20,7 +20,7 @@ Unlike the built-in `memory-lancedb` plugin, Memory Claw is:
 - **Autonomous**: Manages its own DB, config, and tools
 - **Persistent**: Survives OpenClaw updates without data loss
 - **Intelligent**: Dynamic importance scoring, weighted recall, injection detection
-- **Multilingual**: Supports French, English, Spanish, and German
+- **Multilingual**: Supports French, English, Spanish, German, and Chinese
 - **Complete**: Full CLI, export/import, GC, statistics
 
 ---
@@ -29,11 +29,12 @@ Unlike the built-in `memory-lancedb` plugin, Memory Claw is:
 
 ### Multilingual Support (v2.2.0)
 
-Memory Claw supports four languages with automatic detection:
+Memory Claw supports five languages with automatic detection:
 - **French (fr)**: Primary language with most complete patterns
 - **English (en)**: Full support for English conversations
 - **Spanish (es)**: Spanish language patterns
 - **German (de)**: German language patterns
+- **Chinese (zh)**: Chinese language patterns (Simplified + Traditional)
 
 The plugin automatically detects the language of each message and applies the appropriate patterns for capture and categorization. Configure active locales using the `locales` parameter in your config.
 
@@ -187,7 +188,7 @@ openclaw start
 | `embedding.model` | string | `"mistral-embed"` | Embedding model to use |
 | `embedding.baseUrl` | string | `"https://api.mistral.ai/v1"` | Base URL for embedding API |
 | `embedding.dimensions` | number | `1024` | Vector dimension for embeddings |
-| `locales` | string[] | `["fr", "en"]` | Active locales (fr, en, es, de) |
+| `locales` | string[] | `["fr", "en"]` | Active locales (fr, en, es, de, zh) |
 | `dbPath` | string | `"~/.openclaw/memory/memory-claw"` | Path to LanceDB database |
 | `maxCapturePerTurn` | number | `5` | Maximum memories captured per turn |
 | `captureMinChars` | number | `20` | Minimum text length for capture |
@@ -438,6 +439,7 @@ Memory Claw v2.2.0 introduces a multilingual architecture:
 - **English (en)**: Full support
 - **Spanish (es)**: Spanish language patterns
 - **German (de)**: German language patterns
+- **Chinese (zh)**: Chinese language patterns (Simplified + Traditional) / 中文（简体 + 繁体）
 
 ### Configuration
 
@@ -449,7 +451,7 @@ Configure active locales in your `openclaw.json`:
     "entries": {
       "memory-claw": {
         "config": {
-          "locales": ["fr", "en", "es", "de"]
+          "locales": ["fr", "en", "es", "de", "zh"]
         }
       }
     }
@@ -742,7 +744,7 @@ ISC
 ## Changelog
 
 ### v2.2.0 (Current)
-- Multilingual support (French, English, Spanish, German)
+- Multilingual support (French, English, Spanish, German, Chinese)
 - Automatic language detection
 - Locale-specific trigger and category patterns
 - Renamed from memory-french to memory-claw
