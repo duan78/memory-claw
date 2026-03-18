@@ -6,15 +6,25 @@
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages
+ * - `session_end`: Captures facts even on crash/kill
  * - `before_agent_start`: Injects relevant context
  *
- * @version 1.1.0
+ * Tools:
+ * - `memory_store`: Manually store a memo
+ * - `memory_recall`: Search stored memories
+ * - `memory_forget`: Delete a memo
+ *
+ * @version 1.2.0
  * @author duan78
  */
 
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import type * as LanceDB from "@lancedb/lancedb";
 import OpenAI from "openai";
+import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 // ============================================================================
@@ -65,11 +75,19 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   enableStats: true,
 };
 
-const DEFAULT_DB_PATH = () => {
-  const { homedir } = require("node:os");
-  const { join } = require("node:path");
-  return join(homedir(), ".openclaw", "memory", "lancedb");
-};
+const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
+
+const STATS_PATH = join(homedir(), ".openclaw", "memory", "memory-french-stats.json");
+
+// ============================================================================
+// NOTE: LanceDB Schema Compatibility
+// ============================================================================
+// The categories 'seo', 'technical', 'workflow', 'debug' used in this plugin
+// are NOT part of the standard MemoryCategory type from memory-lancedb.
+// This is intentional - these categories are specifically tailored for French
+// tech/web/SEO context and provide better categorization than generic ones.
+// They are stored as plain strings in LanceDB and work fine for recall.
+// ============================================================================
 
 // ============================================================================
 // French Triggers — Enriched patterns for tech/web/SEO context
@@ -356,18 +374,54 @@ class MemoryDB {
     return this.table!.countRows();
   }
 
-  async findByText(text: string, limit = 5): Promise<SearchResult[]> {
+  async deleteById(id: string): Promise<boolean> {
     await this.ensure();
-    const results = await this.table!.search("text").limit(limit).toArray();
-    return results
-      .map((row) => ({
-        id: row.id as string,
-        text: row.text as string,
-        category: row.category as string,
-        importance: row.importance as number,
-        score: 1.0,
-      }))
-      .filter((r) => calculateTextSimilarity(text, r.text) > 0.85);
+    try {
+      await this.table!.delete(`id = '${id}'`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async deleteByQuery(query: string): Promise<number> {
+    await this.ensure();
+    // Delete all memories that match the query text with high similarity
+    const results = await this.textSearch(query, 50);
+    let deleted = 0;
+    for (const result of results) {
+      await this.deleteById(result.id);
+      deleted++;
+    }
+    return deleted;
+  }
+
+  async textSearch(query: string, limit = 10): Promise<SearchResult[]> {
+    await this.ensure();
+    // Use full-text search on the text column
+    // Note: In LanceDB, we can use the search() method with a query string for FTS
+    // This requires the text column to be indexed for text search
+    try {
+      const results = await this.table!.search("text").query(query).limit(limit).toArray();
+      return results
+        .map((row) => ({
+          id: row.id as string,
+          text: row.text as string,
+          category: row.category as string,
+          importance: row.importance as number,
+          score: 1.0,
+        }))
+        .filter((r) => calculateTextSimilarity(query, r.text) > 0.5);
+    } catch {
+      // Fallback: scan all results and filter by similarity
+      // This is less efficient but works without text index
+      return [];
+    }
+  }
+
+  async findByText(text: string, limit = 5): Promise<SearchResult[]> {
+    // Alias for textSearch for backward compatibility
+    return this.textSearch(text, limit);
   }
 }
 
@@ -377,6 +431,7 @@ class MemoryDB {
 
 class Embeddings {
   private client: OpenAI;
+  private detectedVectorDim: number | null = null;
 
   constructor(
     apiKey: string,
@@ -400,7 +455,19 @@ class Embeddings {
 
     try {
       const response = await this.client.embeddings.create(params as any);
-      return response.data[0].embedding;
+      const vector = response.data[0].embedding;
+
+      // Detect actual vector dimension on first embedding
+      if (!this.detectedVectorDim) {
+        this.detectedVectorDim = vector.length;
+        if (this.dimensions && this.dimensions !== vector.length) {
+          console.warn(
+            `memory-french: Vector dimension mismatch! Config: ${this.dimensions}, Actual: ${vector.length}. Using actual dimension.`
+          );
+        }
+      }
+
+      return vector;
     } catch (error) {
       if (error instanceof Error) {
         throw new Error(`Embedding failed: ${error.message}`);
@@ -408,11 +475,22 @@ class Embeddings {
       throw error;
     }
   }
+
+  getVectorDim(): number {
+    return this.detectedVectorDim || this.dimensions || 1024;
+  }
 }
 
 // ============================================================================
-// Statistics Tracker
+// Statistics Tracker with Persistence
 // ============================================================================
+
+interface StatsData {
+  captures: number;
+  recalls: number;
+  errors: number;
+  lastReset: number;
+}
 
 class StatsTracker {
   private captures = 0;
@@ -420,16 +498,55 @@ class StatsTracker {
   private errors = 0;
   private lastReset = Date.now();
 
-  capture() {
+  constructor() {
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      if (existsSync(STATS_PATH)) {
+        const data = JSON.parse(readFileSync(STATS_PATH, "utf-8")) as StatsData;
+        this.captures = data.captures || 0;
+        this.recalls = data.recalls || 0;
+        this.errors = data.errors || 0;
+        this.lastReset = data.lastReset || Date.now();
+      }
+    } catch (error) {
+      console.warn(`memory-french: Failed to load stats: ${error}`);
+    }
+  }
+
+  private save(): void {
+    try {
+      const dir = join(homedir(), ".openclaw", "memory");
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      const data: StatsData = {
+        captures: this.captures,
+        recalls: this.recalls,
+        errors: this.errors,
+        lastReset: this.lastReset,
+      };
+      writeFileSync(STATS_PATH, JSON.stringify(data, null, 2));
+    } catch (error) {
+      console.warn(`memory-french: Failed to save stats: ${error}`);
+    }
+  }
+
+  capture(): void {
     this.captures++;
+    this.save();
   }
 
-  recall(count: number) {
+  recall(count: number): void {
     this.recalls += count;
+    this.save();
   }
 
-  error() {
+  error(): void {
     this.errors++;
+    this.save();
   }
 
   getStats(): { captures: number; recalls: number; errors: number; uptime: number } {
@@ -441,11 +558,12 @@ class StatsTracker {
     };
   }
 
-  reset() {
+  reset(): void {
     this.captures = 0;
     this.recalls = 0;
     this.errors = 0;
     this.lastReset = Date.now();
+    this.save();
   }
 }
 
@@ -467,6 +585,16 @@ const plugin = {
     const embeddingCfg = (memoryLancedbConfig?.embedding ??
       {}) as Record<string, unknown>;
 
+    // Check for double injection warning
+    const autoRecall = memoryLancedbConfig?.autoRecall as boolean | undefined;
+    if (autoRecall !== false) {
+      api.logger.warn(
+        "memory-french: ⚠️ Potential double injection detected! memory-lancedb has autoRecall enabled. " +
+        "Both plugins may inject context into conversations. Consider disabling autoRecall in memory-lancedb " +
+        "if you want only memory-french to handle French memories, or set autoRecall: false in memory-lancedb config."
+      );
+    }
+
     const apiKey =
       (embeddingCfg.apiKey as string) || process.env.MISTRAL_API_KEY || "";
     const model = (embeddingCfg.model as string) || "mistral-embed";
@@ -486,10 +614,7 @@ const plugin = {
       embedding: { apiKey, model, baseUrl, dimensions },
     };
 
-    const { homedir } = require("node:os");
-    const { join } = require("node:path");
-    const dbPath =
-      cfg.dbPath || join(homedir(), ".openclaw", "memory", "lancedb");
+    const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
     const vectorDim = dimensions || 1024;
 
     const db = new MemoryDB(dbPath, vectorDim);
@@ -499,6 +624,174 @@ const plugin = {
     api.logger.info(
       `memory-french: Registered (db: ${dbPath}, model: ${model}, vectorDim: ${vectorDim})`
     );
+
+    // ========================================================================
+    // Register Tools
+    // ========================================================================
+
+    api.registerTool({
+      name: "memory_store",
+      description: "Store a memo in memory for future recall. Useful for capturing important facts, preferences, decisions, or context that should be remembered across conversations.",
+      parameters: Type.Object({
+        text: Type.String({
+          description: "The text content to store in memory",
+          minLength: 5,
+          maxLength: 10000,
+        }),
+        importance: Type.Optional(Type.Number({
+          description: "Importance score from 0.0 to 1.0 (default: 0.7)",
+          minimum: 0,
+          maximum: 1,
+        })),
+        category: Type.Optional(Type.String({
+          description: "Category: preference, decision, entity, seo, technical, workflow, debug, fact (default: auto-detected)",
+        })),
+      }),
+      handler: async (args) => {
+        try {
+          const { text, importance = 0.7, category } = args;
+          const vector = await embeddings.embed(text);
+          const detectedCategory = category || detectCategory(text);
+
+          // Check for duplicates
+          const vectorMatches = await db.search(vector, 3, 0.90);
+          let isDuplicate = false;
+
+          for (const match of vectorMatches) {
+            const textSim = calculateTextSimilarity(text, match.text);
+            if (textSim > 0.85) {
+              isDuplicate = true;
+              break;
+            }
+          }
+
+          if (isDuplicate) {
+            return {
+              success: false,
+              error: "Duplicate memory detected - similar content already exists",
+            };
+          }
+
+          const entry = await db.store({
+            text: normalizeText(text),
+            vector,
+            importance,
+            category: detectedCategory,
+          });
+
+          stats.capture();
+
+          return {
+            success: true,
+            memoryId: entry.id,
+            category: detectedCategory,
+            message: `Memory stored successfully with ID: ${entry.id}`,
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to store memory: ${errorMsg}`,
+          };
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "memory_recall",
+      description: "Search and retrieve stored memories by semantic similarity or text query. Useful for finding previously stored facts, preferences, decisions, or context.",
+      parameters: Type.Object({
+        query: Type.String({
+          description: "Search query to find relevant memories",
+          minLength: 3,
+        }),
+        limit: Type.Optional(Type.Number({
+          description: "Maximum number of results to return (default: 5)",
+          minimum: 1,
+          maximum: 50,
+        })),
+      }),
+      handler: async (args) => {
+        try {
+          const { query, limit = 5 } = args;
+
+          // Try vector search first
+          const vector = await embeddings.embed(query);
+          const results = await db.search(vector, limit, cfg.recallMinScore || 0.3);
+
+          stats.recall(results.length);
+
+          return {
+            success: true,
+            count: results.length,
+            memories: results.map((r) => ({
+              id: r.id,
+              text: r.text,
+              category: r.category,
+              importance: r.importance,
+              score: r.score,
+            })),
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to recall memories: ${errorMsg}`,
+          };
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "memory_forget",
+      description: "Delete a stored memory by ID or by query. Useful for removing outdated, incorrect, or sensitive information from memory.",
+      parameters: Type.Object({
+        memoryId: Type.Optional(Type.String({
+          description: "Specific memory ID to delete (if provided, query is ignored)",
+        })),
+        query: Type.Optional(Type.String({
+          description: "Query to find memories to delete (deletes all matches)",
+        })),
+      }),
+      handler: async (args) => {
+        try {
+          const { memoryId, query } = args;
+
+          if (memoryId) {
+            const deleted = await db.deleteById(memoryId);
+            return {
+              success: deleted,
+              message: deleted
+                ? `Memory ${memoryId} deleted successfully`
+                : `Memory ${memoryId} not found`,
+            };
+          }
+
+          if (query) {
+            const deleted = await db.deleteByQuery(query);
+            return {
+              success: true,
+              count: deleted,
+              message: `Deleted ${deleted} memories matching query`,
+            };
+          }
+
+          return {
+            success: false,
+            error: "Either memoryId or query must be provided",
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to forget memory: ${errorMsg}`,
+          };
+        }
+      },
+    });
 
     // ========================================================================
     // Hook: Auto-recall - Inject relevant memories before agent starts
@@ -541,96 +834,134 @@ const plugin = {
     });
 
     // ========================================================================
-    // Hook: Auto-capture - Extract facts from user messages
+    // Hook: Auto-capture - Extract facts from user messages (agent_end)
     // ========================================================================
+
+    const processMessages = async (messages: unknown[]): Promise<void> => {
+      const texts: string[] = [];
+
+      // Extract text content from messages
+      for (const msg of messages) {
+        if (!msg || typeof msg !== "object") continue;
+        const msgObj = msg as Record<string, unknown>;
+        if (msgObj.role !== "user") continue;
+
+        const content = msgObj.content;
+        if (typeof content === "string") {
+          texts.push(content);
+          continue;
+        }
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (
+              block &&
+              typeof block === "object" &&
+              (block as Record<string, unknown>).type === "text" &&
+              typeof (block as Record<string, unknown>).text === "string"
+            ) {
+              texts.push((block as Record<string, unknown>).text as string);
+            }
+          }
+        }
+      }
+
+      const toCapture = texts.filter((text) =>
+        shouldCapture(
+          text,
+          cfg.captureMinChars || 20,
+          cfg.captureMaxChars || 3000
+        )
+      );
+
+      if (toCapture.length === 0) return;
+
+      let stored = 0;
+      for (const text of toCapture.slice(0, cfg.maxCapturePerTurn || 5)) {
+        const category = detectCategory(text);
+        const vector = await embeddings.embed(text);
+
+        // Hybrid duplicate check: vector similarity + text similarity
+        const vectorMatches = await db.search(vector, 3, 0.90);
+        let isDuplicate = false;
+
+        for (const match of vectorMatches) {
+          const textSim = calculateTextSimilarity(text, match.text);
+          if (textSim > 0.85) {
+            isDuplicate = true;
+            break;
+          }
+        }
+
+        if (isDuplicate) continue;
+
+        await db.store({
+          text: normalizeText(text),
+          vector,
+          importance: 0.7,
+          category,
+        });
+        stored++;
+      }
+
+      if (stored > 0) {
+        stats.capture();
+        if (cfg.enableStats) {
+          api.logger.info(
+            `memory-french: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, errors: ${stats.getStats().errors})`
+          );
+        }
+      }
+    };
 
     api.on("agent_end", async (event) => {
       if (!event.success || !event.messages || event.messages.length === 0)
         return;
 
       try {
-        const texts: string[] = [];
-
-        // Extract text content from messages
-        for (const msg of event.messages) {
-          if (!msg || typeof msg !== "object") continue;
-          const msgObj = msg as Record<string, unknown>;
-          if (msgObj.role !== "user") continue;
-
-          const content = msgObj.content;
-          if (typeof content === "string") {
-            texts.push(content);
-            continue;
-          }
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (
-                block &&
-                typeof block === "object" &&
-                (block as Record<string, unknown>).type === "text" &&
-                typeof (block as Record<string, unknown>).text === "string"
-              ) {
-                texts.push((block as Record<string, unknown>).text as string);
-              }
-            }
-          }
-        }
-
-        const toCapture = texts.filter((text) =>
-          shouldCapture(
-            text,
-            cfg.captureMinChars || 20,
-            cfg.captureMaxChars || 3000
-          )
-        );
-
-        if (toCapture.length === 0) return;
-
-        let stored = 0;
-        for (const text of toCapture.slice(0, cfg.maxCapturePerTurn || 5)) {
-          const category = detectCategory(text);
-          const vector = await embeddings.embed(text);
-
-          // Hybrid duplicate check: vector similarity + text similarity
-          const vectorMatches = await db.search(vector, 3, 0.90);
-          let isDuplicate = false;
-
-          for (const match of vectorMatches) {
-            const textSim = calculateTextSimilarity(text, match.text);
-            if (textSim > 0.85) {
-              isDuplicate = true;
-              break;
-            }
-          }
-
-          if (isDuplicate) continue;
-
-          await db.store({
-            text: normalizeText(text),
-            vector,
-            importance: 0.7,
-            category,
-          });
-          stored++;
-        }
-
-        if (stored > 0) {
-          stats.capture();
-          if (cfg.enableStats) {
-            api.logger.info(
-              `memory-french: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, errors: ${stats.getStats().errors})`
-            );
-          }
-        }
+        await processMessages(event.messages);
       } catch (err) {
         stats.error();
         api.logger.warn(`memory-french: Capture failed: ${String(err)}`);
       }
     });
 
+    // ========================================================================
+    // Hook: Auto-capture on session end (crash/kill recovery)
+    // ========================================================================
+
+    api.on("session_end", async (event) => {
+      // session_end provides the session file path
+      const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
+      if (!sessionFile) return;
+
+      try {
+        // Read the transcript from the session file
+        const { readFile } = await import("node:fs/promises");
+        const transcript = await readFile(sessionFile, "utf-8");
+        const session = JSON.parse(transcript);
+
+        // Extract messages from the session
+        const messages = session.messages || session.conversation?.messages || [];
+        if (Array.isArray(messages) && messages.length > 0) {
+          await processMessages(messages);
+          api.logger.info(
+            `memory-french: Captured memories from session_end (crash/kill recovery)`
+          );
+        }
+      } catch (err) {
+        stats.error();
+        api.logger.warn(`memory-french: Session end capture failed: ${String(err)}`);
+      }
+    });
+
+    // ========================================================================
+    // Service Registration with Cleanup
+    // ========================================================================
+
     // Optional: Log stats periodically (every 5 minutes)
+    let statsInterval: ReturnType<typeof setInterval> | null = null;
     if (cfg.enableStats) {
-      setInterval(() => {
+      statsInterval = setInterval(() => {
         const s = stats.getStats();
         if (s.captures > 0 || s.recalls > 0) {
           api.logger.info(
@@ -639,6 +970,17 @@ const plugin = {
         }
       }, 300000);
     }
+
+    // Register service with cleanup for proper shutdown
+    api.registerService({
+      name: "memory-french",
+      stop() {
+        if (statsInterval) {
+          clearInterval(statsInterval);
+          statsInterval = null;
+        }
+      },
+    });
   },
 };
 

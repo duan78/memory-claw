@@ -1,8 +1,8 @@
 {
   "id": "memory-french",
   "name": "Memory French Enhancer",
-  "version": "1.1.0",
-  "description": "Captures et rappelle les mémos en français via LanceDB + Mistral Embeddings. Patterns intelligents pour contexte tech/web/SEO, déduplication hybride, statistiques intégrées. Survit aux MAJ OpenClaw car indépendant du plugin memory-lancedb.",
+  "version": "1.2.0",
+  "description": "Captures et rappelle les mémos en français via LanceDB + Mistral Embeddings. Patterns intelligents pour contexte tech/web/SEO, déduplication hybride, statistiques persistantes. Hooks: agent_end, session_end, before_agent_start. Tools: memory_store, memory_recall, memory_forget. Survit aux MAJ OpenClaw car indépendant du plugin memory-lancedb.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

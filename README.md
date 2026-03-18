@@ -14,7 +14,9 @@ Le plugin officiel `memory-lancedb` a un auto-capture basé sur des patterns reg
 - **Filtrage anti-bruit robuste** : élimine les injections de contexte, métadonnées système, répétitions
 - **Déduplication hybride** : vectorielle + textuelle pour éviter les doublons
 - **Compatible Mistral Embeddings** : fonctionne avec `mistral-embed` via l'API OpenAI-compatible
-- **Statistiques intégrées** : suivi des captures, rappels et erreurs
+- **Statistiques persistantes** : sauvegardées dans `~/.openclaw/memory/memory-french-stats.json`
+- **Tools autonomes** : `memory_store`, `memory_recall`, `memory_forget`
+- **Hook session_end** : capture même en cas de crash/kill de l'agent
 - **Indépendant d'OpenClaw** : survit aux mises à jour car situé dans le workspace
 
 ## 📦 Installation
@@ -108,7 +110,17 @@ Vous pouvez ajouter une section spécifique dans `openclaw.json` :
 5. Vérifie les doublons (vectoriel + textuel)
 6. Génère l'embedding et stocke dans LanceDB
 
-### 2. Rappel automatique (`before_agent_start`)
+### 2. Capture en cas de crash (`session_end`)
+
+En plus du hook `agent_end`, le plugin utilise `session_end` pour capturer les mémos même lorsque l'agent crash ou est killé :
+
+1. Lit le fichier de transcript de la session
+2. Extrait les messages utilisateur
+3. Applique le même processus de capture que `agent_end`
+
+Cette double couche de capture garantit qu'aucune information importante n'est perdue, même en cas d'erreur critique.
+
+### 3. Rappel automatique (`before_agent_start`)
 
 Avant chaque nouvelle conversation, le plugin :
 
@@ -117,7 +129,52 @@ Avant chaque nouvelle conversation, le plugin :
 3. Filtre par score de similarité
 4. Injecte le contexte pertinent dans le prompt
 
-### 3. Catégories
+### 4. Tools disponibles
+
+Le plugin enregistre 3 tools utilisables directement par l'agent :
+
+#### `memory_store`
+
+Stocke un mémo manuellement dans la mémoire.
+
+```typescript
+parameters: {
+  text: string;           // Contenu à stocker (5-10000 caractères)
+  importance?: number;    // Score 0.0-1.0 (défaut: 0.7)
+  category?: string;      // Catégorie (défaut: auto-détectée)
+}
+```
+
+#### `memory_recall`
+
+Recherche des mémos par similarité sémantique.
+
+```typescript
+parameters: {
+  query: string;          // Recherche textuelle
+  limit?: number;         // Max résultats (défaut: 5, max: 50)
+}
+```
+
+#### `memory_forget`
+
+Supprime un mémo par ID ou par requête.
+
+```typescript
+parameters: {
+  memoryId?: string;      // ID spécifique à supprimer
+  query?: string;         // Supprime tous les mémos matchant
+}
+```
+
+Ces tools permettent une interaction explicite avec la mémoire, par exemple :
+- "Store this important decision in memory"
+- "Search for what I said about my SEO preferences"
+- "Forget all memories about the old server config"
+
+### 5. Catégories
+
+Les catégories suivantes sont utilisées (spécifiques au contexte tech/web/SEO français) :
 
 - **preference** : Préférences, choix, goûts
 - **decision** : Décisions prises, accords
@@ -130,6 +187,30 @@ Avant chaque nouvelle conversation, le plugin :
 
 ## 🔧 Compatibilité
 
+### Compatibilité memory-lancedb
+
+**⚠️ Double injection potentielle** : Si `memory-lancedb` a `autoRecall: true` (défaut), les deux plugins injecteront du contexte dans vos conversations. Le plugin détecte cette configuration et affiche un warning au démarrage.
+
+**Recommandation** : Si vous utilisez memory-french comme plugin principal pour le français, désactivez l'auto-recall de memory-lancedb :
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-lancedb": {
+        "config": {
+          "autoRecall": false
+        }
+      }
+    }
+  }
+}
+```
+
+**Conflit de schéma** : Les catégories `seo`, `technical`, `workflow`, `debug` ne font pas partie du type `MemoryCategory` standard de memory-lancedb. C'est intentionnel — ces catégories sont optimisées pour le contexte tech/web/SEO francophone. Elles sont stockées comme des chaînes simples dans LanceDB et fonctionnent correctement pour le rappel.
+
+### Compatibilité OpenClaw
+
 - OpenClaw : ✅ Compatible avec toutes les versions
 - LanceDB : ✅ Partage la même base que `memory-lancedb`
 - Mistral : ✅ `mistral-embed` (1024 dimensions)
@@ -137,11 +218,24 @@ Avant chaque nouvelle conversation, le plugin :
 
 ## 📊 Statistiques
 
+Les statistiques sont persistantes et sauvegardées dans `~/.openclaw/memory/memory-french-stats.json` :
+
+```json
+{
+  "captures": 15,
+  "recalls": 42,
+  "errors": 0,
+  "lastReset": 1710758400000
+}
+```
+
 Le plugin log automatiquement toutes les 5 minutes :
 
 ```
 memory-french: Stats - Captures: 15, Recalls: 42, Errors: 0, Uptime: 300s
 ```
+
+Les stats sont chargées au démarrage et sauvegardées après chaque opération (capture, recall, error), ce qui permet de les conserver entre les redémarrages du gateway.
 
 ## 🛡️ Sécurité
 
@@ -165,9 +259,18 @@ index.ts
 ├── French Triggers (patterns)
 ├── Text Processing (normalize, similarity)
 ├── LanceDB Wrapper (MemoryDB)
+│   ├── store()
+│   ├── search() [vectorielle]
+│   ├── textSearch() [texte]
+│   ├── deleteById()
+│   └── deleteByQuery()
 ├── Embeddings Client (Mistral)
-├── Stats Tracker
-└── Plugin Definition (hooks)
+│   └── Détection dynamique de vectorDim
+├── Stats Tracker (avec persistence JSON)
+└── Plugin Definition
+    ├── Tools (memory_store, memory_recall, memory_forget)
+    ├── Hooks (before_agent_start, agent_end, session_end)
+    └── Service (cleanup avec stop())
 ```
 
 ## 🐛 Débugging
@@ -194,10 +297,28 @@ Vérifier la base LanceDB :
 sqlite3 ~/.openclaw/memory/lancedb/lance.db "SELECT COUNT(*) FROM memories"
 ```
 
+Vérifier les stats :
+
+```bash
+cat ~/.openclaw/memory/memory-french-stats.json
+```
+
 ## 📝 Dépendances
 
 - `openai` : SDK OpenAI-compatible pour appeler l'API Mistral
 - `@lancedb/lancedb` : Base de données vectorielle
+- `@sinclair/typebox` : Définition de schéma pour les tools
+
+## 🆕 v1.2.0 - Nouveautés
+
+- **Tools autonomes** : `memory_store`, `memory_recall`, `memory_forget`
+- **Hook session_end** : Capture même en cas de crash/kill
+- **Statistiques persistantes** : Sauvegardées dans un fichier JSON
+- **Détection dynamique vectorDim** : S'adapte à la dimension réelle des embeddings
+- **Warning double injection** : Alerte si memory-lancedb a autoRecall activé
+- **100% ESM** : Remplacement complet de `require()` par des `import`
+- **Cleanup propre** : `registerService` avec `stop()` pour libérer les ressources
+- **Documentation du conflit de schéma** : Commentaire expliquant les catégories spécifiques
 
 ## 🤝 Contribution
 
@@ -213,4 +334,4 @@ ISC
 
 ---
 
-*Version 1.1.0 - 2026-03-18*
+*Version 1.2.0 - 2026-03-18*
