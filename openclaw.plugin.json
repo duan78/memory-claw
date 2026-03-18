@@ -1,0 +1,10 @@
+{
+  "id": "memory-french",
+  "name": "Memory French Enhancer",
+  "description": "Captures et rappelle les mémos en français via LanceDB. Survit aux MAJ OpenClaw car il est indépendant du plugin memory-lancedb.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
