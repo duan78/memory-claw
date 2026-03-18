@@ -32,6 +32,7 @@ import { fr } from "./fr.js";
 import { en } from "./en.js";
 import { es } from "./es.js";
 import { de } from "./de.js";
+import { zh } from "./zh.js";
 
 // Available locales registry
 export const availableLocales: Record<string, LocalePatterns> = {
@@ -39,6 +40,7 @@ export const availableLocales: Record<string, LocalePatterns> = {
   en,
   es,
   de,
+  zh,
 };
 
 /**
@@ -108,11 +110,17 @@ export function loadLocales(localeCodes: string[]): LocalePatterns {
 /**
  * Detect language from text using heuristics
  * @param text - Text to analyze
- * @returns Detected language code ("fr", "en", "es", "de", or "unknown")
+ * @returns Detected language code ("fr", "en", "es", "de", "zh", or "unknown")
  */
 export function detectLanguage(text: string): string {
   if (!text || typeof text !== "string") {
     return "unknown";
+  }
+
+  // Quick CJK check first (Chinese detection doesn't rely on whitespace words)
+  const cjkMatch = text.match(/[\u4e00-\u9fff]/g);
+  if (cjkMatch && cjkMatch.length > 2) {
+    return "zh";
   }
 
   const normalized = text.toLowerCase();
@@ -128,6 +136,7 @@ export function detectLanguage(text: string): string {
     en: 0,
     es: 0,
     de: 0,
+    zh: 0,
   };
 
   // Check common words
