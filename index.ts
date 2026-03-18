@@ -184,7 +184,7 @@ const INJECTION_PATTERNS = [
   /exec|execute|run (?:command|cmd|bash)/i,
   /eval\(|eval\s+/i,
   /\$_GET|\$_POST|\$_REQUEST/i,
-  /;.*rm\s+-rf|&&.*rm\s+-rf/i,
+  new RegExp(";.*rm\\s+-rf|&&.*rm\\s+-rf", "i"),
 ];
 
 // ============================================================================
@@ -1256,7 +1256,7 @@ async function migrateFromMemoryLancedb(
 // ============================================================================
 
 const plugin = {
-  id: "memory-claw",
+  id: "memory-french",
   name: "MemoryClaw (Multilingual Memory)",
   description: "100% autonomous multilingual memory plugin - own DB, config, and tools. Supports French, English, Spanish, German.",
 
