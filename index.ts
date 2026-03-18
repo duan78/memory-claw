@@ -1540,7 +1540,7 @@ const plugin = {
 
     // Register CLI command: list memories
     api.registerCli?.({
-      name: "memory-fr list",
+      name: "memory-claw list",
       description: "List stored memories with optional filtering",
       parameters: Type.Object({
         category: Type.Optional(Type.String({ description: "Filter by category" })),
@@ -1592,7 +1592,7 @@ const plugin = {
 
     // Register CLI command: search memories
     api.registerCli?.({
-      name: "memory-fr search",
+      name: "memory-claw search",
       description: "Search memories by query",
       parameters: Type.Object({
         query: Type.String({ description: "Search query" }),
@@ -1628,7 +1628,7 @@ const plugin = {
 
     // Register CLI command: display statistics
     api.registerCli?.({
-      name: "memory-fr stats",
+      name: "memory-claw stats",
       description: "Display memory statistics",
       parameters: Type.Object({}),
       async execute() {
@@ -1662,7 +1662,7 @@ const plugin = {
 
     // Register CLI command: export memories
     api.registerCli?.({
-      name: "memory-fr export",
+      name: "memory-claw export",
       description: "Export memories to JSON file",
       parameters: Type.Object({
         path: Type.Optional(Type.String({ description: "Output file path (default: auto-generated)" })),
@@ -1687,7 +1687,7 @@ const plugin = {
 
     // Register CLI command: run garbage collection
     api.registerCli?.({
-      name: "memory-fr gc",
+      name: "memory-claw gc",
       description: "Run garbage collection to remove old, low-importance memories",
       parameters: Type.Object({
         maxAge: Type.Optional(Type.Number({ description: "Max age in days (default: 30)" })),
@@ -1716,7 +1716,7 @@ const plugin = {
 
     // Register CLI command: clear all memories
     api.registerCli?.({
-      name: "memory-fr clear",
+      name: "memory-claw clear",
       description: "Delete all stored memories (requires confirmation)",
       parameters: Type.Object({
         confirm: Type.Optional(Type.Boolean({ description: "Confirm deletion (must be true)" })),

@@ -297,7 +297,7 @@ Run garbage collection to remove old, low-importance memories.
 
 The plugin registers 6 CLI commands:
 
-### openclaw memory-fr list
+### openclaw memory-claw list
 
 List stored memories with optional filtering.
 
@@ -308,11 +308,11 @@ List stored memories with optional filtering.
 
 **Example:**
 ```bash
-openclaw memory-fr list --category preference --limit 10
-openclaw memory-fr list --json
+openclaw memory-claw list --category preference --limit 10
+openclaw memory-claw list --json
 ```
 
-### openclaw memory-fr search <query>
+### openclaw memory-claw search <query>
 
 Search memories by semantic similarity.
 
@@ -321,17 +321,17 @@ Search memories by semantic similarity.
 
 **Example:**
 ```bash
-openclaw memory-fr search "TypeScript preferences"
-openclaw memory-fr search "SEO strategy" --limit 5
+openclaw memory-claw search "TypeScript preferences"
+openclaw memory-claw search "SEO strategy" --limit 5
 ```
 
-### openclaw memory-fr stats
+### openclaw memory-claw stats
 
 Display memory statistics.
 
 **Example:**
 ```bash
-$ openclaw memory-fr stats
+$ openclaw memory-claw stats
 Memory Statistics:
 ------------------
 Total memories: 42
@@ -342,7 +342,7 @@ Uptime: 45 minutes
 Rate limit: 3/hour (max: 10)
 ```
 
-### openclaw memory-fr export [path]
+### openclaw memory-claw export [path]
 
 Export memories to a JSON file.
 
@@ -351,11 +351,11 @@ Export memories to a JSON file.
 
 **Example:**
 ```bash
-openclaw memory-fr export
-openclaw memory-fr export --path ~/backup/memories.json
+openclaw memory-claw export
+openclaw memory-claw export --path ~/backup/memories.json
 ```
 
-### openclaw memory-fr gc
+### openclaw memory-claw gc
 
 Run garbage collection.
 
@@ -366,11 +366,11 @@ Run garbage collection.
 
 **Example:**
 ```bash
-openclaw memory-fr gc
-openclaw memory-fr gc --maxAge 60 --minImportance 0.3
+openclaw memory-claw gc
+openclaw memory-claw gc --maxAge 60 --minImportance 0.3
 ```
 
-### openclaw memory-fr clear
+### openclaw memory-claw clear
 
 Delete all stored memories (requires confirmation).
 
@@ -379,7 +379,7 @@ Delete all stored memories (requires confirmation).
 
 **Example:**
 ```bash
-openclaw memory-fr clear --confirm=true
+openclaw memory-claw clear --confirm=true
 ⚠️  This action cannot be undone!
 Cleared 42 memories from the database.
 ```
@@ -548,7 +548,7 @@ Run GC manually via tool or CLI:
 
 ```bash
 # Via CLI
-openclaw memory-fr gc --maxAge 60 --minImportance 0.3
+openclaw memory-claw gc --maxAge 60 --minImportance 0.3
 
 # Via tool (agent can call)
 memory_gc with maxAge=5184000000, minImportance=0.3, minHitCount=3
@@ -595,10 +595,10 @@ Memories are exported to a versioned JSON format:
 
 ```bash
 # Export memories
-openclaw memory-fr export --path ~/backup/memories-$(date +%Y%m%d).json
+openclaw memory-claw export --path ~/backup/memories-$(date +%Y%m%d).json
 
 # On new machine or after reset
-openclaw memory-fr import ~/backup/memories-20250318.json
+openclaw memory-claw import ~/backup/memories-20250318.json
 ```
 
 ---
@@ -676,7 +676,7 @@ Memory Claw uses semantic versioning. Major version changes may include breaking
 **Issue:** Conversations aren't being stored
 
 **Solutions:**
-- Check rate limit: `openclaw memory-fr stats`
+- Check rate limit: `openclaw memory-claw stats`
 - Verify triggers match your language (check `locales` config)
 - Enable stats: Set `enableStats: true` in config
 - Check logs for capture attempts
@@ -690,7 +690,7 @@ Memory Claw uses semantic versioning. Major version changes may include breaking
 - Increase `recallLimit` to fetch more candidates
 - Lower `recallMinScore` to include more results
 - Ensure `enableWeightedRecall: true` for better ranking
-- Check if memories were captured (use `memory-fr list`)
+- Check if memories were captured (use `memory-claw list`)
 - Verify embedding model is working (check API key)
 
 ### Database Errors
@@ -718,9 +718,9 @@ Memory Claw uses semantic versioning. Major version changes may include breaking
 **Issue:** High RAM or disk usage
 
 **Solutions:**
-- Run garbage collection: `openclaw memory-fr gc`
+- Run garbage collection: `openclaw memory-claw gc`
 - Reduce `gcMaxAge` to delete older memories
-- Export and clear: `openclaw memory-fr export && openclaw memory-fr clear --confirm=true`
+- Export and clear: `openclaw memory-claw export && openclaw memory-claw clear --confirm=true`
 - Reduce `maxCapturePerTurn` to limit captures
 
 ---

@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.0.0",
-  "description": "100% autonomous OpenClaw plugin for French memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import.",
+  "version": "2.2.0",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import.",
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx test.ts"
@@ -10,7 +10,7 @@
     "openclaw",
     "plugin",
     "memory",
-    "french",
+    "multilingual",
     "lancedb",
     "mistral",
     "autonomous"
