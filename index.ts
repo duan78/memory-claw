@@ -1,7 +1,7 @@
 /**
  * memory-french — Enhanced French memory capture plugin for OpenClaw
  *
- * Captures and recalls French conversations via LanceDB + Mistral Embeddings.
+ * 100% autonomous plugin - manages its own DB, config, and tools.
  * Independent from memory-lancedb, survives OpenClaw updates.
  *
  * Hooks:
@@ -13,8 +13,11 @@
  * - `memory_store`: Manually store a memo
  * - `memory_recall`: Search stored memories
  * - `memory_forget`: Delete a memo
+ * - `memory_export`: Export memories to JSON
+ * - `memory_import`: Import memories from JSON
+ * - `memory_gc`: Run garbage collection
  *
- * @version 1.2.0
+ * @version 2.0.0
  * @author duan78
  */
 
@@ -46,6 +49,8 @@ type FrenchMemoryConfig = {
   recallLimit?: number;
   recallMinScore?: number;
   enableStats?: boolean;
+  gcInterval?: number;
+  gcMaxAge?: number;
 };
 
 type MemoryEntry = {
@@ -55,6 +60,9 @@ type MemoryEntry = {
   importance: number;
   category: string;
   createdAt: number;
+  updatedAt: number;
+  source: "auto-capture" | "agent_end" | "session_end" | "manual";
+  hitCount: number;
 };
 
 type SearchResult = {
@@ -63,6 +71,23 @@ type SearchResult = {
   category: string;
   importance: number;
   score: number;
+  hitCount: number;
+};
+
+type MemoryExport = {
+  version: string;
+  exportedAt: number;
+  count: number;
+  memories: Array<{
+    id: string;
+    text: string;
+    importance: number;
+    category: string;
+    createdAt: number;
+    updatedAt: number;
+    source: string;
+    hitCount: number;
+  }>;
 };
 
 const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
@@ -73,21 +98,16 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   recallLimit: 5,
   recallMinScore: 0.3,
   enableStats: true,
+  gcInterval: 86400000, // 24 hours
+  gcMaxAge: 2592000000, // 30 days
 };
 
-const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
+const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-french");
 
 const STATS_PATH = join(homedir(), ".openclaw", "memory", "memory-french-stats.json");
 
-// ============================================================================
-// NOTE: LanceDB Schema Compatibility
-// ============================================================================
-// The categories 'seo', 'technical', 'workflow', 'debug' used in this plugin
-// are NOT part of the standard MemoryCategory type from memory-lancedb.
-// This is intentional - these categories are specifically tailored for French
-// tech/web/SEO context and provide better categorization than generic ones.
-// They are stored as plain strings in LanceDB and work fine for recall.
-// ============================================================================
+const TABLE_NAME = "memories_fr";
+const OLD_TABLE_NAME = "memories"; // For migration
 
 // ============================================================================
 // French Triggers — Enriched patterns for tech/web/SEO context
@@ -142,7 +162,7 @@ const FRENCH_TRIGGERS = [
   // Web & SEO specific
   /SEO|referencement|r[ée]f[ée]rencement|backlinks?\b/i,
   /Google|ranking|position| Classement\b/i,
-  /mots-cl[ée]s?|keywords?\b/i,
+  /mots-cl[ee]s?|keywords?\b/i,
   /contenu|content|article|blog|page\b/i,
   /optimis[ée]|performance|vitesse\b/i,
   /analytics|stats|statistiques\b/i,
@@ -289,10 +309,8 @@ function escapeForPrompt(text: string): string {
 }
 
 // ============================================================================
-// LanceDB Wrapper
+// LanceDB Wrapper with Extended Schema
 // ============================================================================
-
-const TABLE_NAME = "memories";
 
 class MemoryDB {
   private db: LanceDB.Connection | null = null;
@@ -324,6 +342,9 @@ class MemoryDB {
           importance: 0,
           category: "other",
           createdAt: 0,
+          updatedAt: 0,
+          source: "manual",
+          hitCount: 0,
         },
       ]);
       await this.table.delete('id = "__schema__"');
@@ -335,12 +356,16 @@ class MemoryDB {
     vector: number[];
     importance: number;
     category: string;
+    source: "auto-capture" | "agent_end" | "session_end" | "manual";
   }): Promise<MemoryEntry> {
     await this.ensure();
+    const now = Date.now();
     const fullEntry = {
       ...entry,
       id: randomUUID(),
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
+      hitCount: 0,
     };
     await this.table!.add([fullEntry]);
     return fullEntry as MemoryEntry;
@@ -364,6 +389,7 @@ class MemoryDB {
           category: row.category as string,
           importance: row.importance as number,
           score,
+          hitCount: (row.hitCount as number) || 0,
         };
       })
       .filter((r) => r.score >= minScore);
@@ -386,7 +412,6 @@ class MemoryDB {
 
   async deleteByQuery(query: string): Promise<number> {
     await this.ensure();
-    // Delete all memories that match the query text with high similarity
     const results = await this.textSearch(query, 50);
     let deleted = 0;
     for (const result of results) {
@@ -398,9 +423,6 @@ class MemoryDB {
 
   async textSearch(query: string, limit = 10): Promise<SearchResult[]> {
     await this.ensure();
-    // Use full-text search on the text column
-    // Note: In LanceDB, we can use the search() method with a query string for FTS
-    // This requires the text column to be indexed for text search
     try {
       const results = await this.table!.search("text").query(query).limit(limit).toArray();
       return results
@@ -410,18 +432,101 @@ class MemoryDB {
           category: row.category as string,
           importance: row.importance as number,
           score: 1.0,
+          hitCount: (row.hitCount as number) || 0,
         }))
         .filter((r) => calculateTextSimilarity(query, r.text) > 0.5);
     } catch {
-      // Fallback: scan all results and filter by similarity
-      // This is less efficient but works without text index
       return [];
     }
   }
 
   async findByText(text: string, limit = 5): Promise<SearchResult[]> {
-    // Alias for textSearch for backward compatibility
     return this.textSearch(text, limit);
+  }
+
+  async incrementHitCount(id: string): Promise<void> {
+    await this.ensure();
+    try {
+      // Read the current entry
+      const results = await this.table!.search("text").query(`id=${id}`).limit(1).toArray();
+      if (results.length > 0) {
+        const entry = results[0] as any;
+        const newHitCount = ((entry.hitCount as number) || 0) + 1;
+        // Update the entry with new hitCount and updatedAt
+        await this.table!.update(
+          `id = '${id}'`,
+          [{ column: "hitCount", value: newHitCount }, { column: "updatedAt", value: Date.now() }]
+        );
+      }
+    } catch (error) {
+      // Silently fail if we can't increment hit count
+      console.warn(`memory-french: Failed to increment hit count for ${id}: ${error}`);
+    }
+  }
+
+  async getAll(): Promise<MemoryEntry[]> {
+    await this.ensure();
+    const results = await this.table!.search("text").query("").limit(10000).toArray();
+    return results.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      vector: row.vector as number[],
+      importance: row.importance as number,
+      category: row.category as string,
+      createdAt: row.createdAt as number,
+      updatedAt: row.updatedAt as number,
+      source: row.source as "auto-capture" | "agent_end" | "session_end" | "manual",
+      hitCount: (row.hitCount as number) || 0,
+    }));
+  }
+
+  async garbageCollect(maxAge: number, minImportance: number, minHitCount: number): Promise<number> {
+    await this.ensure();
+    const now = Date.now();
+    const allMemories = await this.getAll();
+    let deleted = 0;
+
+    for (const memory of allMemories) {
+      const age = now - memory.createdAt;
+      if (
+        age > maxAge &&
+        memory.importance < minImportance &&
+        memory.hitCount < minHitCount
+      ) {
+        await this.deleteById(memory.id);
+        deleted++;
+      }
+    }
+
+    return deleted;
+  }
+
+  async tableExists(tableName: string): Promise<boolean> {
+    await this.ensure();
+    const tables = await this.db!.tableNames();
+    return tables.includes(tableName);
+  }
+
+  async getOldTableEntries(): Promise<MemoryEntry[]> {
+    await this.ensure();
+    const tables = await this.db!.tableNames();
+    if (!tables.includes(OLD_TABLE_NAME)) {
+      return [];
+    }
+
+    const oldTable = await this.db!.openTable(OLD_TABLE_NAME);
+    const results = await oldTable.search("text").query("").limit(10000).toArray();
+    return results.map((row) => ({
+      id: row.id as string,
+      text: row.text as string,
+      vector: row.vector as number[],
+      importance: row.importance as number,
+      category: row.category as string,
+      createdAt: row.createdAt as number,
+      updatedAt: Date.now(),
+      source: "manual" as const,
+      hitCount: 0,
+    }));
   }
 }
 
@@ -568,62 +673,179 @@ class StatsTracker {
 }
 
 // ============================================================================
+// Export/Import Functions
+// ============================================================================
+
+async function exportToJson(db: MemoryDB, filePath?: string): Promise<string> {
+  const memories = await db.getAll();
+  const exportData: MemoryExport = {
+    version: "2.0.0",
+    exportedAt: Date.now(),
+    count: memories.length,
+    memories: memories.map((m) => ({
+      id: m.id,
+      text: m.text,
+      importance: m.importance,
+      category: m.category,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+      source: m.source,
+      hitCount: m.hitCount,
+    })),
+  };
+
+  const outputPath = filePath || join(
+    homedir(),
+    ".openclaw",
+    "memory",
+    `memory-french-backup-${Date.now()}.json`
+  );
+
+  const dir = join(homedir(), ".openclaw", "memory");
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  writeFileSync(outputPath, JSON.stringify(exportData, null, 2));
+  return outputPath;
+}
+
+async function importFromJson(
+  db: MemoryDB,
+  embeddings: Embeddings,
+  filePath: string
+): Promise<{ imported: number; skipped: number }> {
+  const data = JSON.parse(readFileSync(filePath, "utf-8")) as MemoryExport;
+  let imported = 0;
+  let skipped = 0;
+
+  for (const memo of data.memories) {
+    // Check for duplicates by text similarity
+    const existing = await db.findByText(memo.text, 1);
+    if (existing.length > 0 && existing[0].score > 0.85) {
+      skipped++;
+      continue;
+    }
+
+    // Generate embedding
+    const vector = await embeddings.embed(memo.text);
+
+    // Store with original metadata
+    await db.store({
+      text: memo.text,
+      vector,
+      importance: memo.importance,
+      category: memo.category,
+      source: memo.source as any,
+    });
+
+    imported++;
+  }
+
+  return { imported, skipped };
+}
+
+// ============================================================================
+// Migration Function
+// ============================================================================
+
+async function migrateFromMemoryLancedb(
+  db: MemoryDB,
+  embeddings: Embeddings,
+  logger: Console
+): Promise<number> {
+  const oldEntries = await db.getOldTableEntries();
+  if (oldEntries.length === 0) {
+    logger.info("memory-french: No old memories found to migrate");
+    return 0;
+  }
+
+  let migrated = 0;
+  for (const entry of oldEntries) {
+    // Check for duplicates
+    const existing = await db.findByText(entry.text, 1);
+    if (existing.length > 0 && existing[0].score > 0.85) {
+      continue;
+    }
+
+    // Store in new table
+    await db.store({
+      text: entry.text,
+      vector: entry.vector,
+      importance: entry.importance,
+      category: entry.category,
+      source: "manual",
+    });
+
+    migrated++;
+  }
+
+  logger.info(`memory-french: Migrated ${migrated} memories from ${OLD_TABLE_NAME} to ${TABLE_NAME}`);
+  return migrated;
+}
+
+// ============================================================================
 // Plugin Definition
 // ============================================================================
 
 const plugin = {
   id: "memory-french",
   name: "Memory French Enhancer",
-  description: "Captures and recalls French memories via LanceDB + Mistral Embeddings",
+  description: "100% autonomous French memory plugin - own DB, config, and tools",
 
   register(api: OpenClawPluginApi) {
-    // Read embedding config from memory-lancedb (reuse same LanceDB base & API key)
-    const memoryLancedbConfig = api.config?.plugins?.entries?.[
-      "memory-lancedb"
-    ]?.config as Record<string, unknown> | undefined;
+    // Read plugin config from openclaw.json
+    const pluginConfig = api.config?.plugins?.entries?.[
+      "memory-french"
+    ]?.config as FrenchMemoryConfig | undefined;
 
-    const embeddingCfg = (memoryLancedbConfig?.embedding ??
-      {}) as Record<string, unknown>;
-
-    // Check for double injection warning
-    const autoRecall = memoryLancedbConfig?.autoRecall as boolean | undefined;
-    if (autoRecall !== false) {
+    if (!pluginConfig || !pluginConfig.embedding) {
       api.logger.warn(
-        "memory-french: ⚠️ Potential double injection detected! memory-lancedb has autoRecall enabled. " +
-        "Both plugins may inject context into conversations. Consider disabling autoRecall in memory-lancedb " +
-        "if you want only memory-french to handle French memories, or set autoRecall: false in memory-lancedb config."
-      );
-    }
-
-    const apiKey =
-      (embeddingCfg.apiKey as string) || process.env.MISTRAL_API_KEY || "";
-    const model = (embeddingCfg.model as string) || "mistral-embed";
-    const baseUrl =
-      (embeddingCfg.baseUrl as string) || "https://api.mistral.ai/v1";
-    const dimensions = embeddingCfg.dimensions as number | undefined;
-
-    if (!apiKey) {
-      api.logger.warn(
-        "memory-french: No embedding API key found, plugin disabled"
+        "memory-french: No embedding config found in plugins.entries.memory-french.config. Plugin disabled."
       );
       return;
     }
 
+    const { embedding, ...restConfig } = pluginConfig;
     const cfg: FrenchMemoryConfig = {
       ...DEFAULT_CONFIG,
-      embedding: { apiKey, model, baseUrl, dimensions },
+      ...restConfig,
+      embedding,
     };
 
+    const apiKey = embedding.apiKey || process.env.MISTRAL_API_KEY || "";
+    if (!apiKey) {
+      api.logger.warn("memory-french: No embedding API key found, plugin disabled");
+      return;
+    }
+
     const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
-    const vectorDim = dimensions || 1024;
+    const vectorDim = embedding.dimensions || 1024;
 
     const db = new MemoryDB(dbPath, vectorDim);
-    const embeddings = new Embeddings(apiKey, model, baseUrl, dimensions);
+    const embeddings = new Embeddings(
+      apiKey,
+      embedding.model || "mistral-embed",
+      embedding.baseUrl,
+      embedding.dimensions
+    );
     const stats = new StatsTracker();
 
     api.logger.info(
-      `memory-french: Registered (db: ${dbPath}, model: ${model}, vectorDim: ${vectorDim})`
+      `memory-french v2.0.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim})`
     );
+
+    // Run migration on first start if old table exists
+    (async () => {
+      try {
+        const oldTableExists = await db.tableExists(OLD_TABLE_NAME);
+        if (oldTableExists) {
+          await migrateFromMemoryLancedb(db, embeddings, api.logger);
+        }
+      } catch (error) {
+        api.logger.warn(`memory-french: Migration failed: ${error}`);
+      }
+    })();
 
     // ========================================================================
     // Register Tools
@@ -677,6 +899,7 @@ const plugin = {
             vector,
             importance,
             category: detectedCategory,
+            source: "manual",
           });
 
           stats.capture();
@@ -720,6 +943,11 @@ const plugin = {
           const vector = await embeddings.embed(query);
           const results = await db.search(vector, limit, cfg.recallMinScore || 0.3);
 
+          // Increment hit counts for matched memories
+          for (const result of results) {
+            await db.incrementHitCount(result.id);
+          }
+
           stats.recall(results.length);
 
           return {
@@ -731,6 +959,7 @@ const plugin = {
               category: r.category,
               importance: r.importance,
               score: r.score,
+              hitCount: r.hitCount,
             })),
           };
         } catch (error) {
@@ -793,6 +1022,108 @@ const plugin = {
       },
     });
 
+    api.registerTool({
+      name: "memory_export",
+      description: "Export all stored memories to a JSON file for backup. Useful for creating backups or migrating data.",
+      parameters: Type.Object({
+        filePath: Type.Optional(Type.String({
+          description: "Optional custom file path for export (default: ~/.openclaw/memory/memory-french-backup-{timestamp}.json)",
+        })),
+      }),
+      handler: async (args) => {
+        try {
+          const { filePath } = args;
+          const outputPath = await exportToJson(db, filePath);
+
+          return {
+            success: true,
+            filePath: outputPath,
+            message: `Memories exported successfully to ${outputPath}`,
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to export memories: ${errorMsg}`,
+          };
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "memory_import",
+      description: "Import memories from a JSON file. Useful for restoring backups or migrating data.",
+      parameters: Type.Object({
+        filePath: Type.String({
+          description: "Path to the JSON file to import",
+        }),
+      }),
+      handler: async (args) => {
+        try {
+          const { filePath } = args;
+          const result = await importFromJson(db, embeddings, filePath);
+
+          return {
+            success: true,
+            imported: result.imported,
+            skipped: result.skipped,
+            message: `Imported ${result.imported} memories, skipped ${result.skipped} duplicates`,
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to import memories: ${errorMsg}`,
+          };
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "memory_gc",
+      description: "Run garbage collection to remove old, low-importance memories. Deletes memories older than 30 days with importance < 0.5 and hitCount < 3.",
+      parameters: Type.Object({
+        maxAge: Type.Optional(Type.Number({
+          description: "Maximum age in milliseconds (default: 2592000000 = 30 days)",
+        })),
+        minImportance: Type.Optional(Type.Number({
+          description: "Minimum importance threshold (default: 0.5)",
+          minimum: 0,
+          maximum: 1,
+        })),
+        minHitCount: Type.Optional(Type.Number({
+          description: "Minimum hit count threshold (default: 3)",
+          minimum: 0,
+        })),
+      }),
+      handler: async (args) => {
+        try {
+          const {
+            maxAge = cfg.gcMaxAge || 2592000000,
+            minImportance = 0.5,
+            minHitCount = 3,
+          } = args;
+
+          const deleted = await db.garbageCollect(maxAge, minImportance, minHitCount);
+
+          return {
+            success: true,
+            deleted,
+            message: `Garbage collection completed: ${deleted} memories removed`,
+          };
+        } catch (error) {
+          stats.error();
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            error: `Failed to run garbage collection: ${errorMsg}`,
+          };
+        }
+      },
+    });
+
     // ========================================================================
     // Hook: Auto-recall - Inject relevant memories before agent starts
     // ========================================================================
@@ -809,6 +1140,11 @@ const plugin = {
         );
 
         if (results.length === 0) return;
+
+        // Increment hit counts for recalled memories
+        for (const result of results) {
+          await db.incrementHitCount(result.id);
+        }
 
         stats.recall(results.length);
 
@@ -899,6 +1235,7 @@ const plugin = {
           vector,
           importance: 0.7,
           category,
+          source: "agent_end",
         });
         stored++;
       }
@@ -930,17 +1267,14 @@ const plugin = {
     // ========================================================================
 
     api.on("session_end", async (event) => {
-      // session_end provides the session file path
       const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
       if (!sessionFile) return;
 
       try {
-        // Read the transcript from the session file
         const { readFile } = await import("node:fs/promises");
         const transcript = await readFile(sessionFile, "utf-8");
         const session = JSON.parse(transcript);
 
-        // Extract messages from the session
         const messages = session.messages || session.conversation?.messages || [];
         if (Array.isArray(messages) && messages.length > 0) {
           await processMessages(messages);
@@ -958,8 +1292,9 @@ const plugin = {
     // Service Registration with Cleanup
     // ========================================================================
 
-    // Optional: Log stats periodically (every 5 minutes)
     let statsInterval: ReturnType<typeof setInterval> | null = null;
+    let gcInterval: ReturnType<typeof setInterval> | null = null;
+
     if (cfg.enableStats) {
       statsInterval = setInterval(() => {
         const s = stats.getStats();
@@ -968,7 +1303,41 @@ const plugin = {
             `memory-french: Stats - Captures: ${s.captures}, Recalls: ${s.recalls}, Errors: ${s.errors}, Uptime: ${s.uptime}s`
           );
         }
-      }, 300000);
+      }, 300000); // Every 5 minutes
+    }
+
+    // Run GC periodically
+    if (cfg.gcInterval && cfg.gcInterval > 0) {
+      gcInterval = setInterval(async () => {
+        try {
+          const deleted = await db.garbageCollect(
+            cfg.gcMaxAge || 2592000000,
+            0.5,
+            3
+          );
+          if (deleted > 0) {
+            api.logger.info(`memory-french: GC removed ${deleted} old memories`);
+          }
+        } catch (error) {
+          api.logger.warn(`memory-french: GC failed: ${error}`);
+        }
+      }, cfg.gcInterval);
+
+      // Run initial GC after 1 minute
+      setTimeout(async () => {
+        try {
+          const deleted = await db.garbageCollect(
+            cfg.gcMaxAge || 2592000000,
+            0.5,
+            3
+          );
+          if (deleted > 0) {
+            api.logger.info(`memory-french: Initial GC removed ${deleted} old memories`);
+          }
+        } catch (error) {
+          api.logger.warn(`memory-french: Initial GC failed: ${error}`);
+        }
+      }, 60000);
     }
 
     // Register service with cleanup for proper shutdown
@@ -978,6 +1347,10 @@ const plugin = {
         if (statsInterval) {
           clearInterval(statsInterval);
           statsInterval = null;
+        }
+        if (gcInterval) {
+          clearInterval(gcInterval);
+          gcInterval = null;
         }
       },
     });

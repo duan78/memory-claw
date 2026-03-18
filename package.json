@@ -1,12 +1,12 @@
 {
   "name": "memory-french",
-  "version": "1.2.0",
-  "description": "OpenClaw plugin for French memory capture and recall via LanceDB + Mistral Embeddings",
+  "version": "2.0.0",
+  "description": "100% autonomous OpenClaw plugin for French memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --import tsx test.ts"
   },
-  "keywords": ["openclaw", "plugin", "memory", "french", "lancedb", "mistral"],
+  "keywords": ["openclaw", "plugin", "memory", "french", "lancedb", "mistral", "autonomous"],
   "author": "duan78",
   "license": "ISC",
   "type": "module",
@@ -14,5 +14,8 @@
     "@lancedb/lancedb": "^0.27.0",
     "@sinclair/typebox": "^0.34.0",
     "openai": "^6.32.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
   }
 }
