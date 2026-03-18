@@ -30,7 +30,7 @@ import type * as LanceDB from "@lancedb/lancedb";
 import OpenAI from "openai";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { loadLocales, detectLanguage as detectLocaleLanguage, type LocalePatterns } from "./locales/index.js";
+import { loadLocales, detectLanguage as detectLocaleLanguage, getAvailableLocales, type LocalePatterns } from "./locales/index.js";
 
 // ============================================================================
 // Types & Config
@@ -56,7 +56,7 @@ type FrenchMemoryConfig = {
   rateLimitMaxPerHour?: number;
   enableWeightedRecall?: boolean;
   enableDynamicImportance?: boolean;
-  locales?: string[]; // v2.2.0: Active locales (default: ["fr", "en"])
+  locales?: string[]; // v2.2.0: Active locales (default: all available locales)
 };
 
 type MemoryEntry = {
@@ -109,7 +109,7 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   rateLimitMaxPerHour: 10,
   enableWeightedRecall: true,
   enableDynamicImportance: true,
-  locales: ["fr", "en", "es", "de"], // v2.2.0: Default active locales (all supported languages)
+  locales: ["fr", "en", "es", "de", "zh"], // v2.2.0: Default active locales (all supported languages)
 };
 
 const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-claw");
@@ -1289,7 +1289,7 @@ const plugin = {
     };
 
     // Initialize locale patterns based on config
-    const activeLocales = cfg.locales || ["fr", "en"];
+    const activeLocales = cfg.locales || getAvailableLocales();
     initializeLocalePatterns(activeLocales);
     api.logger.info(
       `memory-claw: Loaded locales: ${activeLocales.join(", ")}`
