@@ -184,7 +184,7 @@ const INJECTION_PATTERNS = [
   /exec|execute|run (?:command|cmd|bash)/i,
   /eval\(|eval\s+/i,
   /\$_GET|\$_POST|\$_REQUEST/i,
-  /;.*rm\s+-rf|&&.*rm\s+-rf/ i,
+  /;.*rm\s+-rf|&&.*rm\s+-rf/i,
 ];
 
 // ============================================================================
