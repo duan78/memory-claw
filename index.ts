@@ -17,7 +17,15 @@
  * - `memory_import`: Import memories from JSON
  * - `memory_gc`: Run garbage collection
  *
- * @version 2.0.0
+ * CLI Commands:
+ * - `openclaw memory-fr list`: List stored memories
+ * - `openclaw memory-fr search <query>`: Search memories
+ * - `openclaw memory-fr stats`: Display statistics
+ * - `openclaw memory-fr export [path]`: Export to JSON
+ * - `openclaw memory-fr gc`: Run garbage collection
+ * - `openclaw memory-fr clear`: Delete all memories (with confirmation)
+ *
+ * @version 2.1.0
  * @author duan78
  */
 
@@ -51,6 +59,9 @@ type FrenchMemoryConfig = {
   enableStats?: boolean;
   gcInterval?: number;
   gcMaxAge?: number;
+  rateLimitMaxPerHour?: number;
+  enableWeightedRecall?: boolean;
+  enableDynamicImportance?: boolean;
 };
 
 type MemoryEntry = {
@@ -100,6 +111,9 @@ const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   enableStats: true,
   gcInterval: 86400000, // 24 hours
   gcMaxAge: 2592000000, // 30 days
+  rateLimitMaxPerHour: 10,
+  enableWeightedRecall: true,
+  enableDynamicImportance: true,
 };
 
 const DEFAULT_DB_PATH = join(homedir(), ".openclaw", "memory", "memory-french");
@@ -108,6 +122,75 @@ const STATS_PATH = join(homedir(), ".openclaw", "memory", "memory-french-stats.j
 
 const TABLE_NAME = "memories_fr";
 const OLD_TABLE_NAME = "memories"; // For migration
+
+// ============================================================================
+// Category Importance Weights
+// ============================================================================
+
+const CATEGORY_IMPORTANCE: Record<string, number> = {
+  entity: 0.9,
+  decision: 0.85,
+  preference: 0.7,
+  seo: 0.6,
+  technical: 0.65,
+  workflow: 0.6,
+  debug: 0.4,
+  fact: 0.5,
+};
+
+// ============================================================================
+// Source Importance Weights
+// ============================================================================
+
+const SOURCE_IMPORTANCE: Record<string, number> = {
+  manual: 0.9,
+  agent_end: 0.7,
+  session_end: 0.6,
+  "auto-capture": 0.6,
+};
+
+// ============================================================================
+// Prompt Injection Patterns (enhanced detection)
+// ============================================================================
+
+const INJECTION_PATTERNS = [
+  // French injection patterns
+  /ignore (?:tout|le|les|ce|cela|précédent| précédents)/i,
+  /prompt (?:system|initial|d'origine)/i,
+  /tu (?:es|maintenant|deviens|es maintenant)/i,
+  /nouveau (?:rôle|contexte|instruction)/i,
+  /redéfinir|redéfinis|reconfigure/i,
+  /override|écraser|contourner/i,
+  /instruction (?:cachée|secrète|système)/i,
+
+  // English injection patterns
+  /ignore (?:all|previous|the|this|that)/i,
+  /system prompt|initial prompt/i,
+  /you are (?:now|currently|no longer)/i,
+  /new (?:role|context|instruction)/i,
+  /override|bypass|circumvent/i,
+  /hidden (?:instruction|command|prompt)/i,
+  /forget (?:everything|all instructions)/i,
+
+  // Command injection patterns
+  /exec|execute|run (?:command|cmd|bash)/i,
+  /eval\(|eval\s+/i,
+  /\$_GET|\$_POST|\$_REQUEST/i,
+  /;.*rm\s+-rf|&&.*rm\s+-rf/ i,
+];
+
+// ============================================================================
+// Important Keyword Patterns (bonus +0.1)
+// ============================================================================
+
+const IMPORTANCE_KEYWORD_PATTERNS = [
+  /important|essentiel|crucial|critique/i,
+  /toujours|jamais|always|never/i,
+  /prioritaire|urgent|urgence/i,
+  /obligatoire|requis|required/i,
+  /note (?:bien|ça|cela)|note that/i,
+  /rappelle(?:-toi| vous) (?:bien|que)/i,
+];
 
 // ============================================================================
 // French Triggers — Enriched patterns for tech/web/SEO context
@@ -204,6 +287,10 @@ const SKIP_PATTERNS = [
   /^\s*\d+\.\s+/,
   /^(Treat every|Do not follow)/i,
   /^(the|a|an|this|that|these|those)\s+(memory|fact|info)\s/i,
+  // Additional injection protection
+  /<instruction[^>]*>|<system[^>]*>|<prompt[^>]*>/i,
+  /\[INST\]|\[\/INST\]|\[SYSTEM\]/i,
+  /<\|.*?\|>/g,
 ];
 
 // Low-value content patterns
@@ -214,6 +301,230 @@ const LOW_VALUE_PATTERNS = [
   /^(super|génial|parfait|great|perfect)\b[.!]?$/i,
   /^(attention|ok|merci|thanks|d'accord)\s*[.!]*$/i,
 ];
+
+// ============================================================================
+// Prompt Injection Detection
+// ============================================================================
+
+function calculateInjectionSuspicion(text: string): number {
+  if (!text || typeof text !== "string") return 0;
+  const normalized = text.toLowerCase();
+  let suspicion = 0;
+
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(normalized)) {
+      suspicion += 0.3;
+    }
+  }
+
+  // Cap suspicion at 1.0
+  return Math.min(suspicion, 1.0);
+}
+
+// ============================================================================
+// Dynamic Importance Calculation
+// ============================================================================
+
+function calculateImportance(
+  text: string,
+  category: string,
+  source: "auto-capture" | "agent_end" | "session_end" | "manual"
+): number {
+  if (!text || typeof text !== "string") return 0.5;
+
+  const normalized = text.toLowerCase();
+  const trimmed = text.trim();
+
+  // Base importance from category
+  let importance = CATEGORY_IMPORTANCE[category] || 0.5;
+
+  // Adjust by source
+  const sourceMultiplier = SOURCE_IMPORTANCE[source] || 0.7;
+  importance = importance * 0.8 + sourceMultiplier * 0.2;
+
+  // Length bonus: short precise facts > long vague content
+  const length = trimmed.length;
+  if (length >= 20 && length <= 200) {
+    importance += 0.05; // Sweet spot
+  } else if (length > 1000) {
+    importance -= 0.1; // Too long, likely verbose
+  }
+
+  // Keyword bonus for importance indicators
+  for (const pattern of IMPORTANCE_KEYWORD_PATTERNS) {
+    if (pattern.test(normalized)) {
+      importance += 0.1;
+      break; // Only apply once
+    }
+  }
+
+  // Density bonus: factual content (names, dates, numbers) > fluff
+  const hasEntity = /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(text); // Proper names
+  const hasNumber = /\b\d{4,}\b/.test(text); // Years, large numbers
+  const hasSpecific = /(?:est|sont|:|->|=)/.test(text); // Definitions/mappings
+
+  if (hasEntity || hasNumber || hasSpecific) {
+    importance += 0.05;
+  }
+
+  // Penalty for questions (uncertainty)
+  if (/\?$/.test(trimmed) || /^(?:quoi|qui|où|comment|pourquoi|what|where|when|how|why)/i.test(normalized)) {
+    importance -= 0.2;
+  }
+
+  // Penalty for vague expressions
+  if (/^(?:je pense|je crois|il me semble|maybe|perhaps|probably)\b/i.test(normalized)) {
+    importance -= 0.15;
+  }
+
+  // Clamp to valid range
+  return Math.max(0.1, Math.min(1.0, importance));
+}
+
+// ============================================================================
+// Rate Limiting Tracker
+// ============================================================================
+
+class RateLimiter {
+  private captures: number[] = []; // Timestamps of captures
+  private readonly maxCapturesPerHour: number;
+  private readonly hourMs = 3600000;
+
+  constructor(maxCapturesPerHour = 10) {
+    this.maxCapturesPerHour = maxCapturesPerHour;
+  }
+
+  canCapture(importance = 0.5): boolean {
+    const now = Date.now();
+    // Remove captures older than 1 hour
+    this.captures = this.captures.filter((ts) => now - ts < this.hourMs);
+
+    // If under limit, allow
+    if (this.captures.length < this.maxCapturesPerHour) {
+      return true;
+    }
+
+    // If over limit, only allow high importance
+    return importance > 0.8;
+  }
+
+  recordCapture(): void {
+    this.captures.push(Date.now());
+  }
+
+  getCaptureCount(): number {
+    const now = Date.now();
+    this.captures = this.captures.filter((ts) => now - ts < this.hourMs);
+    return this.captures.length;
+  }
+
+  reset(): void {
+    this.captures = [];
+  }
+}
+
+// ============================================================================
+// Multi-Message Context Grouping
+// ============================================================================
+
+interface GroupedMessage {
+  combinedText: string;
+  messageCount: number;
+  timestamps: number[];
+}
+
+function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
+  const groups: GroupedMessage[] = [];
+  let currentGroup: string[] = [];
+  let currentTimestamps: number[] = [];
+
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") continue;
+    const msgObj = msg as Record<string, unknown>;
+
+    if (msgObj.role !== "user") {
+      // Non-user message ends the current group
+      if (currentGroup.length > 0) {
+        groups.push({
+          combinedText: currentGroup.join(" ").trim(),
+          messageCount: currentGroup.length,
+          timestamps: [...currentTimestamps],
+        });
+        currentGroup = [];
+        currentTimestamps = [];
+      }
+      continue;
+    }
+
+    // Extract text content
+    const content = msgObj.content;
+    let text = "";
+
+    if (typeof content === "string") {
+      text = content;
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (
+          block &&
+          typeof block === "object" &&
+          (block as Record<string, unknown>).type === "text" &&
+          typeof (block as Record<string, unknown>).text === "string"
+        ) {
+          text += (block as Record<string, unknown>).text + " ";
+        }
+      }
+    }
+
+    if (!text || typeof text !== "string") continue;
+
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+
+    // Check if this message is related to the current group
+    if (currentGroup.length > 0) {
+      const lastText = currentGroup[currentGroup.length - 1].toLowerCase();
+      const currentText = trimmed.toLowerCase();
+
+      // Simple semantic similarity: shared significant words
+      const lastWords = new Set(lastText.split(/\s+/).filter((w) => w.length > 4));
+      const currentWords = new Set(currentText.split(/\s+/).filter((w) => w.length > 4));
+
+      const intersection = new Set([...lastWords].filter((x) => currentWords.has(x)));
+      const overlap = intersection.size / Math.max(lastWords.size, currentWords.size);
+
+      // If significant overlap (> 30%), continue the group
+      if (overlap > 0.3) {
+        currentGroup.push(trimmed);
+        currentTimestamps.push((msgObj.createdAt as number) || Date.now());
+        continue;
+      }
+
+      // Otherwise, finalize the current group and start a new one
+      groups.push({
+        combinedText: currentGroup.join(" ").trim(),
+        messageCount: currentGroup.length,
+        timestamps: [...currentTimestamps],
+      });
+      currentGroup = [trimmed];
+      currentTimestamps = [(msgObj.createdAt as number) || Date.now()];
+    } else {
+      // Start new group
+      currentGroup.push(trimmed);
+      currentTimestamps = [(msgObj.createdAt as number) || Date.now()];
+    }
+  }
+
+  // Don't forget the last group
+  if (currentGroup.length > 0) {
+    groups.push({
+      combinedText: currentGroup.join(" ").trim(),
+      messageCount: currentGroup.length,
+      timestamps: [...currentTimestamps],
+    });
+  }
+
+  return groups;
+}
 
 // ============================================================================
 // Text Processing Utilities
@@ -245,27 +556,44 @@ function calculateTextSimilarity(text1: string, text2: string): number {
   return intersection.size / union.size;
 }
 
-function shouldCapture(text: string, minChars: number, maxChars: number): boolean {
-  if (!text || typeof text !== "string") return false;
+function shouldCapture(
+  text: string,
+  minChars: number,
+  maxChars: number,
+  category?: string,
+  source: "auto-capture" | "agent_end" | "session_end" | "manual" = "auto-capture"
+): { should: boolean; importance: number; suspicion: number } {
+  if (!text || typeof text !== "string") return { should: false, importance: 0.5, suspicion: 0 };
   const normalized = normalizeText(text);
 
   if (!normalized || normalized.length < minChars || normalized.length > maxChars) {
-    return false;
+    return { should: false, importance: 0.5, suspicion: 0 };
+  }
+
+  // Check for prompt injection
+  const suspicion = calculateInjectionSuspicion(normalized);
+  if (suspicion > 0.5) {
+    // High suspicion: skip even if triggers match
+    return { should: false, importance: 0.5, suspicion };
   }
 
   if (SKIP_PATTERNS.some((p) => p.test(normalized))) {
-    return false;
+    return { should: false, importance: 0.5, suspicion };
   }
 
   if (LOW_VALUE_PATTERNS.some((p) => p.test(normalized))) {
-    return false;
+    return { should: false, importance: 0.5, suspicion };
   }
 
   if (!FRENCH_TRIGGERS.some((r) => r.test(normalized))) {
-    return false;
+    return { should: false, importance: 0.5, suspicion };
   }
 
-  return true;
+  // Calculate dynamic importance
+  const detectedCategory = category || detectCategory(normalized);
+  const importance = calculateImportance(normalized, detectedCategory, source);
+
+  return { should: true, importance, suspicion };
 }
 
 function detectCategory(text: string): string {
@@ -378,25 +706,68 @@ class MemoryDB {
   async search(
     vector: number[],
     limit = 5,
-    minScore = 0.3
+    minScore = 0.3,
+    enableWeightedScoring = true
   ): Promise<SearchResult[]> {
     await this.ensure();
-    const results = await this.table!.vectorSearch(vector).limit(limit).toArray();
+    // Fetch more results to allow for re-ranking
+    const fetchLimit = enableWeightedScoring ? limit * 3 : limit;
+    const results = await this.table!.vectorSearch(vector).limit(fetchLimit).toArray();
 
-    return results
-      .map((row) => {
-        const distance = (row as any)._distance ?? 0;
-        const score = 1 / (1 + distance);
+    const now = Date.now();
+
+    let scoredResults = results.map((row) => {
+      const distance = (row as any)._distance ?? 0;
+      const similarity = 1 / (1 + distance);
+
+      if (!enableWeightedScoring) {
         return {
           id: row.id as string,
           text: row.text as string,
           category: row.category as string,
           importance: row.importance as number,
-          score,
+          score: similarity,
           hitCount: (row.hitCount as number) || 0,
         };
-      })
-      .filter((r) => r.score >= minScore);
+      }
+
+      // Weighted scoring: similarity (60%) + importance (30%) + recency (10%)
+      const importance = (row.importance as number) || 0.5;
+      const createdAt = (row.createdAt as number) || now;
+      const ageInDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+      const recency = Math.max(0, 1 - ageInDays / 90); // Decay over 90 days
+
+      const weightedScore =
+        similarity * 0.6 + importance * 0.3 + recency * 0.1;
+
+      return {
+        id: row.id as string,
+        text: row.text as string,
+        category: row.category as string,
+        importance,
+        score: weightedScore,
+        hitCount: (row.hitCount as number) || 0,
+      };
+    });
+
+    // Apply diversity penalty: reduce score for frequently recalled items
+    if (enableWeightedScoring) {
+      const maxHitCount = Math.max(...scoredResults.map((r) => r.hitCount), 1);
+      scoredResults = scoredResults.map((r) => {
+        // Slight penalty for high hitCount (0-10% reduction)
+        const diversityPenalty = (r.hitCount / maxHitCount) * 0.1;
+        return {
+          ...r,
+          score: r.score * (1 - diversityPenalty),
+        };
+      });
+    }
+
+    // Sort by final score and apply limit
+    scoredResults.sort((a, b) => b.score - a.score);
+    scoredResults = scoredResults.slice(0, limit);
+
+    return scoredResults.filter((r) => r.score >= minScore);
   }
 
   async count(): Promise<number> {
@@ -834,9 +1205,10 @@ const plugin = {
       embedding.dimensions
     );
     const stats = new StatsTracker();
+    const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
 
     api.logger.info(
-      `memory-french v2.0.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim})`
+      `memory-french v2.1.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour)`
     );
 
     // Run migration on first start if old table exists
@@ -862,16 +1234,23 @@ const plugin = {
         description: "Store a memo in memory for future recall. Useful for capturing important facts, preferences, decisions, or context that should be remembered across conversations.",
         parameters: Type.Object({
           text: Type.String({ description: "The text content to store in memory" }),
-          importance: Type.Optional(Type.Number({ description: "Importance score 0-1 (default: 0.7)" })),
+          importance: Type.Optional(Type.Number({ description: "Importance score 0-1 (default: auto-calculated)" })),
           category: Type.Optional(Type.String({ description: "Category: preference, decision, entity, seo, technical, workflow, debug, fact" })),
         }),
         async execute(_toolCallId, params) {
           try {
-            const { text, importance = 0.7, category } = params as { text: string; importance?: number; category?: string };
-            const vector = await embeddings.embed(text);
+            const { text, importance, category } = params as { text: string; importance?: number; category?: string };
+            const normalizedText = normalizeText(text);
             const detectedCategory = category || detectCategory(text);
 
-            const vectorMatches = await db.search(vector, 3, 0.90);
+            // Calculate dynamic importance if not provided
+            const finalImportance = importance !== undefined
+              ? importance
+              : calculateImportance(normalizedText, detectedCategory, "manual");
+
+            const vector = await embeddings.embed(text);
+
+            const vectorMatches = await db.search(vector, 3, 0.90, false);
             let isDuplicate = false;
             for (const match of vectorMatches) {
               const textSim = calculateTextSimilarity(text, match.text);
@@ -882,10 +1261,22 @@ const plugin = {
               return { content: [{ type: "text" as const, text: "Duplicate: similar content already exists" }] };
             }
 
-            const entry = await db.store({ text: normalizeText(text), vector, importance, category: detectedCategory, source: "manual" });
+            const entry = await db.store({
+              text: normalizedText,
+              vector,
+              importance: finalImportance,
+              category: detectedCategory,
+              source: "manual"
+            });
             stats.capture();
+            rateLimiter.recordCapture();
 
-            return { content: [{ type: "text" as const, text: `Stored: "${text.slice(0, 100)}" (id: ${entry.id}, category: ${detectedCategory})` }] };
+            return {
+              content: [{
+                type: "text" as const,
+                text: `Stored: "${text.slice(0, 100)}" (id: ${entry.id}, category: ${detectedCategory}, importance: ${finalImportance.toFixed(2)})`
+              }]
+            };
           } catch (error) {
             stats.error();
             return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
@@ -899,7 +1290,7 @@ const plugin = {
       {
         name: "memory_recall",
         label: "Memory Recall",
-        description: "Search and retrieve stored memories by semantic similarity.",
+        description: "Search and retrieve stored memories by semantic similarity with weighted scoring (similarity + importance + recency).",
         parameters: Type.Object({
           query: Type.String({ description: "Search query to find relevant memories" }),
           limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
@@ -908,7 +1299,7 @@ const plugin = {
           try {
             const { query, limit = 5 } = params as { query: string; limit?: number };
             const vector = await embeddings.embed(query);
-            const results = await db.search(vector, limit, cfg.recallMinScore || 0.3);
+            const results = await db.search(vector, limit, cfg.recallMinScore || 0.3, true);
 
             for (const result of results) { await db.incrementHitCount(result.id); }
             stats.recall(results.length);
@@ -917,7 +1308,9 @@ const plugin = {
               return { content: [{ type: "text" as const, text: "No relevant memories found." }] };
             }
 
-            const lines = results.map((r, i) => `${i + 1}. [${r.category}] ${r.text} (${(r.score * 100).toFixed(0)}%, hits: ${r.hitCount})`).join("\n");
+            const lines = results.map((r, i) =>
+              `${i + 1}. [${r.category}] ${r.text} (score: ${(r.score * 100).toFixed(0)}%, importance: ${(r.importance * 100).toFixed(0)}%, hits: ${r.hitCount})`
+            ).join("\n");
             return { content: [{ type: "text" as const, text: `Found ${results.length} memories:\n\n${lines}` }] };
           } catch (error) {
             stats.error();
@@ -1027,6 +1420,225 @@ const plugin = {
     );
 
     // ========================================================================
+    // CLI Commands Registration
+    // ========================================================================
+
+    // Register CLI command: list memories
+    api.registerCli?.({
+      name: "memory-fr list",
+      description: "List stored memories with optional filtering",
+      parameters: Type.Object({
+        category: Type.Optional(Type.String({ description: "Filter by category" })),
+        limit: Type.Optional(Type.Number({ description: "Max results (default: 20)" })),
+        json: Type.Optional(Type.Boolean({ description: "Output as JSON (default: false)" })),
+      }),
+      async execute(params) {
+        try {
+          const { category, limit = 20, json: outputJson = false } = params as { category?: string; limit?: number; json?: boolean };
+          const allMemories = await db.getAll();
+
+          let filtered = allMemories;
+          if (category) {
+            filtered = allMemories.filter((m) => m.category === category);
+          }
+
+          const sliced = filtered.slice(0, limit);
+
+          if (outputJson) {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify(sliced.map((m) => ({
+                id: m.id,
+                text: m.text,
+                category: m.category,
+                importance: m.importance,
+                source: m.source,
+                hitCount: m.hitCount,
+                createdAt: new Date(m.createdAt).toISOString(),
+              })), null, 2),
+            };
+          }
+
+          const lines = sliced.map((m, i) =>
+            `${i + 1}. [${m.category}] ${m.text.slice(0, 80)}${m.text.length > 80 ? "..." : ""}\n   Importance: ${(m.importance * 100).toFixed(0)}% | Hits: ${m.hitCount} | Source: ${m.source}`
+          );
+          return {
+            exitCode: 0,
+            stdout: `Found ${sliced.length} memories:\n\n${lines.join("\n\n")}`,
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // Register CLI command: search memories
+    api.registerCli?.({
+      name: "memory-fr search",
+      description: "Search memories by query",
+      parameters: Type.Object({
+        query: Type.String({ description: "Search query" }),
+        limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
+      }),
+      async execute(params) {
+        try {
+          const { query, limit = 10 } = params as { query: string; limit?: number };
+          const vector = await embeddings.embed(query);
+          const results = await db.search(vector, limit, 0.2, true);
+
+          // Increment hit counts for recalled memories
+          for (const result of results) {
+            await db.incrementHitCount(result.id);
+          }
+
+          const lines = results.map((r, i) =>
+            `${i + 1}. [${r.category}] ${r.text}\n   Score: ${(r.score * 100).toFixed(0)}% | Importance: ${(r.importance * 100).toFixed(0)}% | Hits: ${r.hitCount}`
+          );
+
+          return {
+            exitCode: 0,
+            stdout: `Found ${results.length} memories matching "${query}":\n\n${lines.join("\n\n")}`,
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // Register CLI command: display statistics
+    api.registerCli?.({
+      name: "memory-fr stats",
+      description: "Display memory statistics",
+      parameters: Type.Object({}),
+      async execute() {
+        try {
+          const count = await db.count();
+          const statsData = stats.getStats();
+
+          const lines = [
+            `Memory Statistics:`,
+            `------------------`,
+            `Total memories: ${count}`,
+            `Captures: ${statsData.captures}`,
+            `Recalls: ${statsData.recalls}`,
+            `Errors: ${statsData.errors}`,
+            `Uptime: ${Math.floor(statsData.uptime / 60)} minutes`,
+            `Rate limit: ${rateLimiter.getCaptureCount()}/hour (max: 10)`,
+          ];
+
+          return {
+            exitCode: 0,
+            stdout: lines.join("\n"),
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // Register CLI command: export memories
+    api.registerCli?.({
+      name: "memory-fr export",
+      description: "Export memories to JSON file",
+      parameters: Type.Object({
+        path: Type.Optional(Type.String({ description: "Output file path (default: auto-generated)" })),
+      }),
+      async execute(params) {
+        try {
+          const { path: customPath } = params as { path?: string };
+          const outputPath = await exportToJson(db, customPath);
+
+          return {
+            exitCode: 0,
+            stdout: `Exported memories to: ${outputPath}`,
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // Register CLI command: run garbage collection
+    api.registerCli?.({
+      name: "memory-fr gc",
+      description: "Run garbage collection to remove old, low-importance memories",
+      parameters: Type.Object({
+        maxAge: Type.Optional(Type.Number({ description: "Max age in days (default: 30)" })),
+        minImportance: Type.Optional(Type.Number({ description: "Min importance (default: 0.5)" })),
+        minHitCount: Type.Optional(Type.Number({ description: "Min hit count (default: 3)" })),
+      }),
+      async execute(params) {
+        try {
+          const { maxAge: maxAgeDays = 30, minImportance = 0.5, minHitCount = 3 } = params as { maxAge?: number; minImportance?: number; minHitCount?: number };
+          const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+
+          const deleted = await db.garbageCollect(maxAgeMs, minImportance, minHitCount);
+
+          return {
+            exitCode: 0,
+            stdout: `Garbage collection completed: ${deleted} memories removed.`,
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // Register CLI command: clear all memories
+    api.registerCli?.({
+      name: "memory-fr clear",
+      description: "Delete all stored memories (requires confirmation)",
+      parameters: Type.Object({
+        confirm: Type.Optional(Type.Boolean({ description: "Confirm deletion (must be true)" })),
+      }),
+      async execute(params) {
+        try {
+          const { confirm } = params as { confirm?: boolean };
+
+          if (!confirm) {
+            return {
+              exitCode: 1,
+              stderr: "Error: Must set --confirm=true to delete all memories. This action cannot be undone!",
+            };
+          }
+
+          const allMemories = await db.getAll();
+          let deleted = 0;
+
+          for (const memory of allMemories) {
+            await db.deleteById(memory.id);
+            deleted++;
+          }
+
+          return {
+            exitCode: 0,
+            stdout: `Cleared ${deleted} memories from the database.`,
+          };
+        } catch (error) {
+          return {
+            exitCode: 1,
+            stderr: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      },
+    });
+
+    // ========================================================================
     // Hook: Auto-recall - Inject relevant memories before agent starts
     // ========================================================================
 
@@ -1038,7 +1650,8 @@ const plugin = {
         const results = await db.search(
           vector,
           cfg.recallLimit || 5,
-          cfg.recallMinScore || 0.3
+          cfg.recallMinScore || 0.3,
+          true // Enable weighted scoring
         );
 
         if (results.length === 0) return;
@@ -1076,54 +1689,47 @@ const plugin = {
     // ========================================================================
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
-      const texts: string[] = [];
+      // Group consecutive user messages for better context
+      const grouped = groupConsecutiveUserMessages(messages);
 
-      // Extract text content from messages
-      for (const msg of messages) {
-        if (!msg || typeof msg !== "object") continue;
-        const msgObj = msg as Record<string, unknown>;
-        if (msgObj.role !== "user") continue;
-
-        const content = msgObj.content;
-        if (typeof content === "string") {
-          texts.push(content);
-          continue;
-        }
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (
-              block &&
-              typeof block === "object" &&
-              (block as Record<string, unknown>).type === "text" &&
-              typeof (block as Record<string, unknown>).text === "string"
-            ) {
-              texts.push((block as Record<string, unknown>).text as string);
-            }
-          }
-        }
-      }
-
-      const toCapture = texts.filter((text) =>
-        shouldCapture(
-          text,
-          cfg.captureMinChars || 20,
-          cfg.captureMaxChars || 3000
-        )
-      );
-
-      if (toCapture.length === 0) return;
+      if (grouped.length === 0) return;
 
       let stored = 0;
-      for (const text of toCapture.slice(0, cfg.maxCapturePerTurn || 5)) {
-        const category = detectCategory(text);
-        const vector = await embeddings.embed(text);
+      const source: "agent_end" | "session_end" = "agent_end";
+
+      for (const group of grouped) {
+        const { combinedText, messageCount } = group;
+
+        // Check if this should be captured with dynamic importance
+        const captureResult = shouldCapture(
+          combinedText,
+          cfg.captureMinChars || 20,
+          cfg.captureMaxChars || 3000,
+          undefined,
+          source
+        );
+
+        if (!captureResult.should) continue;
+
+        // Check rate limit
+        if (!rateLimiter.canCapture(captureResult.importance)) {
+          if (cfg.enableStats) {
+            api.logger.info(
+              `memory-french: Rate limit reached (${rateLimiter.getCaptureCount()}/hour), skipping low-importance capture`
+            );
+          }
+          continue;
+        }
+
+        const category = detectCategory(combinedText);
+        const vector = await embeddings.embed(combinedText);
 
         // Hybrid duplicate check: vector similarity + text similarity
-        const vectorMatches = await db.search(vector, 3, 0.90);
+        const vectorMatches = await db.search(vector, 3, 0.90, false);
         let isDuplicate = false;
 
         for (const match of vectorMatches) {
-          const textSim = calculateTextSimilarity(text, match.text);
+          const textSim = calculateTextSimilarity(combinedText, match.text);
           if (textSim > 0.85) {
             isDuplicate = true;
             break;
@@ -1133,12 +1739,13 @@ const plugin = {
         if (isDuplicate) continue;
 
         await db.store({
-          text: normalizeText(text),
+          text: normalizeText(combinedText),
           vector,
-          importance: 0.7,
+          importance: captureResult.importance,
           category,
-          source: "agent_end",
+          source,
         });
+        rateLimiter.recordCapture();
         stored++;
       }
 
@@ -1146,7 +1753,7 @@ const plugin = {
         stats.capture();
         if (cfg.enableStats) {
           api.logger.info(
-            `memory-french: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, errors: ${stats.getStats().errors})`
+            `memory-french: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, rate: ${rateLimiter.getCaptureCount()}/hour)`
           );
         }
       }
