@@ -851,278 +851,176 @@ const plugin = {
     // Register Tools
     // ========================================================================
 
-    api.registerTool({
-      name: "memory_store",
-      description: "Store a memo in memory for future recall. Useful for capturing important facts, preferences, decisions, or context that should be remembered across conversations.",
-      parameters: Type.Object({
-        text: Type.String({
-          description: "The text content to store in memory",
-          minLength: 5,
-          maxLength: 10000,
+    api.registerTool(
+      {
+        name: "memory_store",
+        label: "Memory Store",
+        description: "Store a memo in memory for future recall. Useful for capturing important facts, preferences, decisions, or context that should be remembered across conversations.",
+        parameters: Type.Object({
+          text: Type.String({ description: "The text content to store in memory" }),
+          importance: Type.Optional(Type.Number({ description: "Importance score 0-1 (default: 0.7)" })),
+          category: Type.Optional(Type.String({ description: "Category: preference, decision, entity, seo, technical, workflow, debug, fact" })),
         }),
-        importance: Type.Optional(Type.Number({
-          description: "Importance score from 0.0 to 1.0 (default: 0.7)",
-          minimum: 0,
-          maximum: 1,
-        })),
-        category: Type.Optional(Type.String({
-          description: "Category: preference, decision, entity, seo, technical, workflow, debug, fact (default: auto-detected)",
-        })),
-      }),
-      handler: async (args) => {
-        try {
-          const { text, importance = 0.7, category } = args;
-          const vector = await embeddings.embed(text);
-          const detectedCategory = category || detectCategory(text);
+        async execute(_toolCallId, params) {
+          try {
+            const { text, importance = 0.7, category } = params as { text: string; importance?: number; category?: string };
+            const vector = await embeddings.embed(text);
+            const detectedCategory = category || detectCategory(text);
 
-          // Check for duplicates
-          const vectorMatches = await db.search(vector, 3, 0.90);
-          let isDuplicate = false;
-
-          for (const match of vectorMatches) {
-            const textSim = calculateTextSimilarity(text, match.text);
-            if (textSim > 0.85) {
-              isDuplicate = true;
-              break;
+            const vectorMatches = await db.search(vector, 3, 0.90);
+            let isDuplicate = false;
+            for (const match of vectorMatches) {
+              const textSim = calculateTextSimilarity(text, match.text);
+              if (textSim > 0.85) { isDuplicate = true; break; }
             }
+
+            if (isDuplicate) {
+              return { content: [{ type: "text" as const, text: "Duplicate: similar content already exists" }] };
+            }
+
+            const entry = await db.store({ text: normalizeText(text), vector, importance, category: detectedCategory, source: "manual" });
+            stats.capture();
+
+            return { content: [{ type: "text" as const, text: `Stored: "${text.slice(0, 100)}" (id: ${entry.id}, category: ${detectedCategory})` }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
           }
-
-          if (isDuplicate) {
-            return {
-              success: false,
-              error: "Duplicate memory detected - similar content already exists",
-            };
-          }
-
-          const entry = await db.store({
-            text: normalizeText(text),
-            vector,
-            importance,
-            category: detectedCategory,
-            source: "manual",
-          });
-
-          stats.capture();
-
-          return {
-            success: true,
-            memoryId: entry.id,
-            category: detectedCategory,
-            message: `Memory stored successfully with ID: ${entry.id}`,
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to store memory: ${errorMsg}`,
-          };
-        }
+        },
       },
-    });
+      { name: "memory_store" },
+    );
 
-    api.registerTool({
-      name: "memory_recall",
-      description: "Search and retrieve stored memories by semantic similarity or text query. Useful for finding previously stored facts, preferences, decisions, or context.",
-      parameters: Type.Object({
-        query: Type.String({
-          description: "Search query to find relevant memories",
-          minLength: 3,
+    api.registerTool(
+      {
+        name: "memory_recall",
+        label: "Memory Recall",
+        description: "Search and retrieve stored memories by semantic similarity.",
+        parameters: Type.Object({
+          query: Type.String({ description: "Search query to find relevant memories" }),
+          limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
         }),
-        limit: Type.Optional(Type.Number({
-          description: "Maximum number of results to return (default: 5)",
-          minimum: 1,
-          maximum: 50,
-        })),
-      }),
-      handler: async (args) => {
-        try {
-          const { query, limit = 5 } = args;
+        async execute(_toolCallId, params) {
+          try {
+            const { query, limit = 5 } = params as { query: string; limit?: number };
+            const vector = await embeddings.embed(query);
+            const results = await db.search(vector, limit, cfg.recallMinScore || 0.3);
 
-          // Try vector search first
-          const vector = await embeddings.embed(query);
-          const results = await db.search(vector, limit, cfg.recallMinScore || 0.3);
+            for (const result of results) { await db.incrementHitCount(result.id); }
+            stats.recall(results.length);
 
-          // Increment hit counts for matched memories
-          for (const result of results) {
-            await db.incrementHitCount(result.id);
+            if (results.length === 0) {
+              return { content: [{ type: "text" as const, text: "No relevant memories found." }] };
+            }
+
+            const lines = results.map((r, i) => `${i + 1}. [${r.category}] ${r.text} (${(r.score * 100).toFixed(0)}%, hits: ${r.hitCount})`).join("\n");
+            return { content: [{ type: "text" as const, text: `Found ${results.length} memories:\n\n${lines}` }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
           }
-
-          stats.recall(results.length);
-
-          return {
-            success: true,
-            count: results.length,
-            memories: results.map((r) => ({
-              id: r.id,
-              text: r.text,
-              category: r.category,
-              importance: r.importance,
-              score: r.score,
-              hitCount: r.hitCount,
-            })),
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to recall memories: ${errorMsg}`,
-          };
-        }
+        },
       },
-    });
+      { name: "memory_recall" },
+    );
 
-    api.registerTool({
-      name: "memory_forget",
-      description: "Delete a stored memory by ID or by query. Useful for removing outdated, incorrect, or sensitive information from memory.",
-      parameters: Type.Object({
-        memoryId: Type.Optional(Type.String({
-          description: "Specific memory ID to delete (if provided, query is ignored)",
-        })),
-        query: Type.Optional(Type.String({
-          description: "Query to find memories to delete (deletes all matches)",
-        })),
-      }),
-      handler: async (args) => {
-        try {
-          const { memoryId, query } = args;
-
-          if (memoryId) {
-            const deleted = await db.deleteById(memoryId);
-            return {
-              success: deleted,
-              message: deleted
-                ? `Memory ${memoryId} deleted successfully`
-                : `Memory ${memoryId} not found`,
-            };
-          }
-
-          if (query) {
-            const deleted = await db.deleteByQuery(query);
-            return {
-              success: true,
-              count: deleted,
-              message: `Deleted ${deleted} memories matching query`,
-            };
-          }
-
-          return {
-            success: false,
-            error: "Either memoryId or query must be provided",
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to forget memory: ${errorMsg}`,
-          };
-        }
-      },
-    });
-
-    api.registerTool({
-      name: "memory_export",
-      description: "Export all stored memories to a JSON file for backup. Useful for creating backups or migrating data.",
-      parameters: Type.Object({
-        filePath: Type.Optional(Type.String({
-          description: "Optional custom file path for export (default: ~/.openclaw/memory/memory-french-backup-{timestamp}.json)",
-        })),
-      }),
-      handler: async (args) => {
-        try {
-          const { filePath } = args;
-          const outputPath = await exportToJson(db, filePath);
-
-          return {
-            success: true,
-            filePath: outputPath,
-            message: `Memories exported successfully to ${outputPath}`,
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to export memories: ${errorMsg}`,
-          };
-        }
-      },
-    });
-
-    api.registerTool({
-      name: "memory_import",
-      description: "Import memories from a JSON file. Useful for restoring backups or migrating data.",
-      parameters: Type.Object({
-        filePath: Type.String({
-          description: "Path to the JSON file to import",
+    api.registerTool(
+      {
+        name: "memory_forget",
+        label: "Memory Forget",
+        description: "Delete a stored memory by ID or by query.",
+        parameters: Type.Object({
+          memoryId: Type.Optional(Type.String({ description: "Specific memory ID to delete" })),
+          query: Type.Optional(Type.String({ description: "Query to find memories to delete" })),
         }),
-      }),
-      handler: async (args) => {
-        try {
-          const { filePath } = args;
-          const result = await importFromJson(db, embeddings, filePath);
-
-          return {
-            success: true,
-            imported: result.imported,
-            skipped: result.skipped,
-            message: `Imported ${result.imported} memories, skipped ${result.skipped} duplicates`,
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to import memories: ${errorMsg}`,
-          };
-        }
+        async execute(_toolCallId, params) {
+          try {
+            const { memoryId, query } = params as { memoryId?: string; query?: string };
+            if (memoryId) {
+              await db.deleteById(memoryId);
+              return { content: [{ type: "text" as const, text: `Memory ${memoryId} deleted.` }] };
+            }
+            if (query) {
+              const deleted = await db.deleteByQuery(query);
+              return { content: [{ type: "text" as const, text: `Deleted ${deleted} memories matching query.` }] };
+            }
+            return { content: [{ type: "text" as const, text: "Provide memoryId or query." }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
+          }
+        },
       },
-    });
+      { name: "memory_forget" },
+    );
 
-    api.registerTool({
-      name: "memory_gc",
-      description: "Run garbage collection to remove old, low-importance memories. Deletes memories older than 30 days with importance < 0.5 and hitCount < 3.",
-      parameters: Type.Object({
-        maxAge: Type.Optional(Type.Number({
-          description: "Maximum age in milliseconds (default: 2592000000 = 30 days)",
-        })),
-        minImportance: Type.Optional(Type.Number({
-          description: "Minimum importance threshold (default: 0.5)",
-          minimum: 0,
-          maximum: 1,
-        })),
-        minHitCount: Type.Optional(Type.Number({
-          description: "Minimum hit count threshold (default: 3)",
-          minimum: 0,
-        })),
-      }),
-      handler: async (args) => {
-        try {
-          const {
-            maxAge = cfg.gcMaxAge || 2592000000,
-            minImportance = 0.5,
-            minHitCount = 3,
-          } = args;
-
-          const deleted = await db.garbageCollect(maxAge, minImportance, minHitCount);
-
-          return {
-            success: true,
-            deleted,
-            message: `Garbage collection completed: ${deleted} memories removed`,
-          };
-        } catch (error) {
-          stats.error();
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          return {
-            success: false,
-            error: `Failed to run garbage collection: ${errorMsg}`,
-          };
-        }
+    api.registerTool(
+      {
+        name: "memory_export",
+        label: "Memory Export",
+        description: "Export all stored memories to a JSON file for backup.",
+        parameters: Type.Object({
+          filePath: Type.Optional(Type.String({ description: "Custom file path for export" })),
+        }),
+        async execute(_toolCallId, params) {
+          try {
+            const { filePath } = params as { filePath?: string };
+            const outputPath = await exportToJson(db, filePath);
+            return { content: [{ type: "text" as const, text: `Exported to ${outputPath}` }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
+          }
+        },
       },
-    });
+      { name: "memory_export" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_import",
+        label: "Memory Import",
+        description: "Import memories from a JSON file.",
+        parameters: Type.Object({
+          filePath: Type.String({ description: "Path to the JSON file to import" }),
+        }),
+        async execute(_toolCallId, params) {
+          try {
+            const { filePath } = params as { filePath: string };
+            const result = await importFromJson(db, embeddings, filePath);
+            return { content: [{ type: "text" as const, text: `Imported ${result.imported} memories, skipped ${result.skipped} duplicates.` }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
+          }
+        },
+      },
+      { name: "memory_import" },
+    );
+
+    api.registerTool(
+      {
+        name: "memory_gc",
+        label: "Memory GC",
+        description: "Run garbage collection to remove old, low-importance memories.",
+        parameters: Type.Object({
+          maxAge: Type.Optional(Type.Number({ description: "Max age in ms (default: 30 days)" })),
+          minImportance: Type.Optional(Type.Number({ description: "Min importance (default: 0.5)" })),
+          minHitCount: Type.Optional(Type.Number({ description: "Min hit count (default: 3)" })),
+        }),
+        async execute(_toolCallId, params) {
+          try {
+            const { maxAge = cfg.gcMaxAge || 2592000000, minImportance = 0.5, minHitCount = 3 } = params as { maxAge?: number; minImportance?: number; minHitCount?: number };
+            const deleted = await db.garbageCollect(maxAge, minImportance, minHitCount);
+            return { content: [{ type: "text" as const, text: `GC completed: ${deleted} memories removed.` }] };
+          } catch (error) {
+            stats.error();
+            return { content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }] };
+          }
+        },
+      },
+      { name: "memory_gc" },
+    );
 
     // ========================================================================
     // Hook: Auto-recall - Inject relevant memories before agent starts
