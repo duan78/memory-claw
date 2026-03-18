@@ -26,11 +26,36 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type * as LanceDB from "@lancedb/lancedb";
 import OpenAI from "openai";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { loadLocales, detectLanguage as detectLocaleLanguage, getAvailableLocales, type LocalePatterns } from "./locales/index.js";
+
+// ============================================================================
+// Security Utilities
+// ============================================================================
+
+/**
+ * Validates that a string is a properly formatted UUID.
+ * Used to prevent SQL injection in ID-based queries.
+ */
+function isValidUUID(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+/**
+ * Validates that a file path is safe and doesn't escape the intended directory.
+ * Used to prevent path traversal attacks in import/export functions.
+ */
+function safePath(baseDir: string, filePath: string): string {
+  const resolved = resolve(baseDir, filePath);
+  if (!resolved.startsWith(baseDir)) {
+    throw new Error("Path traversal detected: attempted access outside base directory");
+  }
+  return resolved;
+}
 
 // ============================================================================
 // Types & Config
@@ -861,6 +886,9 @@ class MemoryDB {
 
   async deleteById(id: string): Promise<boolean> {
     await this.ensure();
+    if (!isValidUUID(id)) {
+      return false;
+    }
     try {
       await this.table!.delete(`id = '${id}'`);
       return true;
@@ -910,6 +938,9 @@ class MemoryDB {
 
   async incrementHitCount(id: string): Promise<void> {
     await this.ensure();
+    if (!isValidUUID(id)) {
+      return;
+    }
     try {
       // Read the current entry using query with where clause
       const results = await this.table!
@@ -951,18 +982,48 @@ class MemoryDB {
   async garbageCollect(maxAge: number, minImportance: number, minHitCount: number): Promise<number> {
     await this.ensure();
     const now = Date.now();
-    const allMemories = await this.getAll();
     let deleted = 0;
+    const batchSize = 100;
+    let offset = 0;
+    let hasMore = true;
 
-    for (const memory of allMemories) {
-      const age = now - memory.createdAt;
-      if (
-        age > maxAge &&
-        memory.importance < minImportance &&
-        memory.hitCount < minHitCount
-      ) {
-        await this.deleteById(memory.id);
-        deleted++;
+    while (hasMore) {
+      // Process in batches to avoid loading all memories at once
+      const results = await this.table!
+        .query()
+        .limit(batchSize)
+        .offset(offset)
+        .toArray();
+
+      if (results.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (const row of results) {
+        const memory = {
+          id: row.id as string,
+          createdAt: row.createdAt as number,
+          importance: row.importance as number,
+          hitCount: (row.hitCount as number) || 0,
+        };
+
+        const age = now - memory.createdAt;
+        if (
+          age > maxAge &&
+          memory.importance < minImportance &&
+          memory.hitCount < minHitCount
+        ) {
+          await this.deleteById(memory.id);
+          deleted++;
+        }
+      }
+
+      // If we got fewer results than batch size, we've reached the end
+      if (results.length < batchSize) {
+        hasMore = false;
+      } else {
+        offset += batchSize;
       }
     }
 
@@ -1162,16 +1223,24 @@ async function exportToJson(db: MemoryDB, filePath?: string): Promise<string> {
     })),
   };
 
-  const outputPath = filePath || join(
-    homedir(),
-    ".openclaw",
-    "memory",
-    `memory-claw-backup-${Date.now()}.json`
-  );
+  const baseDir = join(homedir(), ".openclaw", "memory");
+  const defaultFileName = `memory-claw-backup-${Date.now()}.json`;
 
-  const dir = join(homedir(), ".openclaw", "memory");
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  let outputPath: string;
+  if (filePath) {
+    // Validate custom path doesn't escape the base directory
+    try {
+      outputPath = safePath(baseDir, filePath);
+    } catch (error) {
+      throw new Error(`Invalid file path: ${error}`);
+    }
+  } else {
+    outputPath = join(baseDir, defaultFileName);
+  }
+
+  // Ensure base directory exists
+  if (!existsSync(baseDir)) {
+    mkdirSync(baseDir, { recursive: true });
   }
 
   writeFileSync(outputPath, JSON.stringify(exportData, null, 2));
@@ -1183,7 +1252,17 @@ async function importFromJson(
   embeddings: Embeddings,
   filePath: string
 ): Promise<{ imported: number; skipped: number }> {
-  const data = JSON.parse(readFileSync(filePath, "utf-8")) as MemoryExport;
+  const baseDir = join(homedir(), ".openclaw", "memory");
+
+  // Validate path doesn't escape the base directory
+  let safeFilePath: string;
+  try {
+    safeFilePath = safePath(baseDir, filePath);
+  } catch (error) {
+    throw new Error(`Invalid file path: ${error}`);
+  }
+
+  const data = JSON.parse(readFileSync(safeFilePath, "utf-8")) as MemoryExport;
   let imported = 0;
   let skipped = 0;
 
