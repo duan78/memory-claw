@@ -1,10 +1,57 @@
 {
   "id": "memory-french",
   "name": "Memory French Enhancer",
-  "description": "Captures et rappelle les mémos en français via LanceDB. Survit aux MAJ OpenClaw car il est indépendant du plugin memory-lancedb.",
+  "version": "1.1.0",
+  "description": "Captures et rappelle les mémos en français via LanceDB + Mistral Embeddings. Patterns intelligents pour contexte tech/web/SEO, déduplication hybride, statistiques intégrées. Survit aux MAJ OpenClaw car indépendant du plugin memory-lancedb.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Active ou désactive le plugin"
+      },
+      "maxCapturePerTurn": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Nombre maximum de mémos capturés par tour de conversation"
+      },
+      "captureMinChars": {
+        "type": "number",
+        "default": 20,
+        "minimum": 5,
+        "maximum": 100,
+        "description": "Longueur minimum du texte pour capture"
+      },
+      "captureMaxChars": {
+        "type": "number",
+        "default": 3000,
+        "minimum": 500,
+        "maximum": 10000,
+        "description": "Longueur maximum du texte pour capture"
+      },
+      "recallLimit": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Nombre maximum de mémos rappelés"
+      },
+      "recallMinScore": {
+        "type": "number",
+        "default": 0.3,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Score minimum de similarité pour le rappel (0-1)"
+      },
+      "enableStats": {
+        "type": "boolean",
+        "default": true,
+        "description": "Active les statistiques et logs détaillés"
+      }
+    }
   }
 }
