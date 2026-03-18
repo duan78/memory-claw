@@ -1,5 +1,5 @@
 {
-  "name": "memory-french",
+  "name": "memory-claw",
   "version": "2.0.0",
   "description": "100% autonomous OpenClaw plugin for French memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import.",
   "main": "index.js",

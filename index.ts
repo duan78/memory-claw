@@ -1,5 +1,5 @@
 /**
- * memory-claw (formerly memory-french) — Multilingual memory capture plugin for OpenClaw
+ * Memory Claw — Multilingual memory capture plugin for OpenClaw
  *
  * 100% autonomous plugin - manages its own DB, config, and tools.
  * Independent from memory-lancedb, survives OpenClaw updates.
@@ -927,7 +927,7 @@ class MemoryDB {
       }
     } catch (error) {
       // Silently fail if we can't increment hit count
-      console.warn(`memory-french: Failed to increment hit count for ${id}: ${error}`);
+      console.warn(`memory-claw: Failed to increment hit count for ${id}: ${error}`);
     }
   }
 
@@ -1034,7 +1034,7 @@ class Embeddings {
         this.detectedVectorDim = vector.length;
         if (this.dimensions && this.dimensions !== vector.length) {
           console.warn(
-            `memory-french: Vector dimension mismatch! Config: ${this.dimensions}, Actual: ${vector.length}. Using actual dimension.`
+            `memory-claw: Vector dimension mismatch! Config: ${this.dimensions}, Actual: ${vector.length}. Using actual dimension.`
           );
         }
       }
@@ -1084,7 +1084,7 @@ class StatsTracker {
         this.lastReset = data.lastReset || Date.now();
       }
     } catch (error) {
-      console.warn(`memory-french: Failed to load stats: ${error}`);
+      console.warn(`memory-claw: Failed to load stats: ${error}`);
     }
   }
 
@@ -1102,7 +1102,7 @@ class StatsTracker {
       };
       writeFileSync(STATS_PATH, JSON.stringify(data, null, 2));
     } catch (error) {
-      console.warn(`memory-french: Failed to save stats: ${error}`);
+      console.warn(`memory-claw: Failed to save stats: ${error}`);
     }
   }
 
@@ -1165,7 +1165,7 @@ async function exportToJson(db: MemoryDB, filePath?: string): Promise<string> {
     homedir(),
     ".openclaw",
     "memory",
-    `memory-french-backup-${Date.now()}.json`
+    `memory-claw-backup-${Date.now()}.json`
   );
 
   const dir = join(homedir(), ".openclaw", "memory");
@@ -1223,7 +1223,7 @@ async function migrateFromMemoryLancedb(
 ): Promise<number> {
   const oldEntries = await db.getOldTableEntries();
   if (oldEntries.length === 0) {
-    logger.info("memory-french: No old memories found to migrate");
+    logger.info("memory-claw: No old memories found to migrate");
     return 0;
   }
 
@@ -1247,7 +1247,7 @@ async function migrateFromMemoryLancedb(
     migrated++;
   }
 
-  logger.info(`memory-french: Migrated ${migrated} memories from ${OLD_TABLE_NAME} to ${TABLE_NAME}`);
+  logger.info(`memory-claw: Migrated ${migrated} memories from ${OLD_TABLE_NAME} to ${TABLE_NAME}`);
   return migrated;
 }
 
@@ -1256,12 +1256,12 @@ async function migrateFromMemoryLancedb(
 // ============================================================================
 
 const plugin = {
-  id: "memory-french",
+  id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
   description: "100% autonomous multilingual memory plugin - own DB, config, and tools. Supports French, English, Spanish, German.",
 
   register(api: OpenClawPluginApi) {
-    // Read plugin config from openclaw.json (support both memory-claw and legacy memory-french)
+    // Read plugin config from openclaw.json (support memory-claw with legacy migration fallback)
     let pluginConfig = api.config?.plugins?.entries?.[
       "memory-claw"
     ]?.config as FrenchMemoryConfig | undefined;
@@ -1325,7 +1325,7 @@ const plugin = {
           await migrateFromMemoryLancedb(db, embeddings, api.logger);
         }
       } catch (error) {
-        api.logger.warn(`memory-french: Migration failed: ${error}`);
+        api.logger.warn(`memory-claw: Migration failed: ${error}`);
       }
     })();
 
@@ -1771,7 +1771,7 @@ const plugin = {
 
         if (cfg.enableStats) {
           api.logger.info?.(
-            `memory-french: Injected ${results.length} memories (total recalls: ${stats.getStats().recalls})`
+            `memory-claw: Injected ${results.length} memories (total recalls: ${stats.getStats().recalls})`
           );
         }
 
@@ -1786,7 +1786,7 @@ const plugin = {
         };
       } catch (err) {
         stats.error();
-        api.logger.warn(`memory-french: Recall failed: ${String(err)}`);
+        api.logger.warn(`memory-claw: Recall failed: ${String(err)}`);
       }
     });
 
@@ -1821,7 +1821,7 @@ const plugin = {
         if (!rateLimiter.canCapture(captureResult.importance)) {
           if (cfg.enableStats) {
             api.logger.info(
-              `memory-french: Rate limit reached (${rateLimiter.getCaptureCount()}/hour), skipping low-importance capture`
+              `memory-claw: Rate limit reached (${rateLimiter.getCaptureCount()}/hour), skipping low-importance capture`
             );
           }
           continue;
@@ -1859,7 +1859,7 @@ const plugin = {
         stats.capture();
         if (cfg.enableStats) {
           api.logger.info(
-            `memory-french: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, rate: ${rateLimiter.getCaptureCount()}/hour)`
+            `memory-claw: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, rate: ${rateLimiter.getCaptureCount()}/hour)`
           );
         }
       }
@@ -1873,7 +1873,7 @@ const plugin = {
         await processMessages(event.messages);
       } catch (err) {
         stats.error();
-        api.logger.warn(`memory-french: Capture failed: ${String(err)}`);
+        api.logger.warn(`memory-claw: Capture failed: ${String(err)}`);
       }
     });
 
@@ -1895,12 +1895,12 @@ const plugin = {
         if (Array.isArray(messages) && messages.length > 0) {
           await processMessages(messages);
           api.logger.info(
-            `memory-french: Captured memories from session_end (crash/kill recovery)`
+            `memory-claw: Captured memories from session_end (crash/kill recovery)`
           );
         }
       } catch (err) {
         stats.error();
-        api.logger.warn(`memory-french: Session end capture failed: ${String(err)}`);
+        api.logger.warn(`memory-claw: Session end capture failed: ${String(err)}`);
       }
     });
 
@@ -1916,7 +1916,7 @@ const plugin = {
         const s = stats.getStats();
         if (s.captures > 0 || s.recalls > 0) {
           api.logger.info(
-            `memory-french: Stats - Captures: ${s.captures}, Recalls: ${s.recalls}, Errors: ${s.errors}, Uptime: ${s.uptime}s`
+            `memory-claw: Stats - Captures: ${s.captures}, Recalls: ${s.recalls}, Errors: ${s.errors}, Uptime: ${s.uptime}s`
           );
         }
       }, 300000); // Every 5 minutes
@@ -1932,10 +1932,10 @@ const plugin = {
             3
           );
           if (deleted > 0) {
-            api.logger.info(`memory-french: GC removed ${deleted} old memories`);
+            api.logger.info(`memory-claw: GC removed ${deleted} old memories`);
           }
         } catch (error) {
-          api.logger.warn(`memory-french: GC failed: ${error}`);
+          api.logger.warn(`memory-claw: GC failed: ${error}`);
         }
       }, cfg.gcInterval);
 
@@ -1948,20 +1948,20 @@ const plugin = {
             3
           );
           if (deleted > 0) {
-            api.logger.info(`memory-french: Initial GC removed ${deleted} old memories`);
+            api.logger.info(`memory-claw: Initial GC removed ${deleted} old memories`);
           }
         } catch (error) {
-          api.logger.warn(`memory-french: Initial GC failed: ${error}`);
+          api.logger.warn(`memory-claw: Initial GC failed: ${error}`);
         }
       }, 60000);
     }
 
     // Register service with cleanup for proper shutdown
     api.registerService({
-      id: "memory-french",
+      id: "memory-claw",
       start: () => {
         api.logger.info(
-          `memory-french: started (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim})`
+          `memory-claw: started (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim})`
         );
       },
       stop: () => {
@@ -1973,7 +1973,7 @@ const plugin = {
           clearInterval(gcInterval);
           gcInterval = null;
         }
-        api.logger.info("memory-french: stopped");
+        api.logger.info("memory-claw: stopped");
       },
     });
   },

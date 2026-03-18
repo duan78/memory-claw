@@ -1,6 +1,6 @@
 {
-  "id": "memory-french",
-  "name": "Memory French Enhancer",
+  "id": "memory-claw",
+  "name": "Memory Claw Enhancer",
   "version": "2.1.0",
   "description": "Plugin 100% autonome pour la capture et le rappel de mémos en français via LanceDB + Mistral Embeddings. Gère sa propre DB, sa propre config, ses propres tools. Patterns intelligents pour contexte tech/web/SEO, déduplication hybride, statistiques persistantes, GC automatique, export/import JSON, migration depuis memory-lancedb. v2.1: Importance dynamique, rappel pondéré, capture multi-messages, CLI commands, hardening injection. Hooks: agent_end, session_end, before_agent_start. Tools: memory_store, memory_recall, memory_forget, memory_export, memory_import, memory_gc. CLI: memory-fr list/search/stats/export/gc/clear.",
   "configSchema": {
@@ -40,7 +40,7 @@
       },
       "dbPath": {
         "type": "string",
-        "default": "~/.openclaw/memory/memory-french",
+        "default": "~/.openclaw/memory/memory-claw",
         "description": "Chemin vers la base LanceDB du plugin"
       },
       "maxCapturePerTurn": {
