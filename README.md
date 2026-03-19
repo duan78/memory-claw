@@ -1,4 +1,4 @@
-# Memory Claw v2.3.1
+# Memory Claw v2.4.0
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -47,7 +47,25 @@ Memory Claw organizes memories into three tiers for intelligent context injectio
 **Tier Promotion/Demotion:**
 - Use `mclaw_promote` to move memory up a tier
 - Use `mclaw_demote` to move memory down a tier
-- Automatic promotion based on hit count and importance
+- **Auto-promotion on recall** (v2.4.0): Memories are automatically promoted when frequently accessed
+
+### Performance Optimizations (v2.4.0)
+
+Memory Claw v2.4.0 includes significant performance improvements:
+
+| Feature | Before | After |
+|---------|--------|-------|
+| **Stats Tracking** | Disk write on every operation | Debounced (30s flush) |
+| **Embeddings API** | Call for every request | LRU cache (1000 entries, 1h TTL) |
+| **Hit Count Updates** | 1 query + 1 update per memory | Batch updates |
+| **Search Results** | Returns full 1024-float vectors | Vectors excluded via `.select()` |
+| **Garbage Collection** | All memories treated equally | Core memories protected |
+
+**Expected Improvements:**
+- `before_agent_start` latency reduced by ~50%
+- 0 disk I/O per capture (debounced stats)
+- Cache hit rate >50% on similar conversations
+- Reduced memory bandwidth during search
 
 ### Multilingual Support (11 Languages)
 
@@ -78,7 +96,7 @@ Each memory receives a score (0-1) calculated dynamically based on:
 
 - **Category**: entity (0.9), decision (0.85), preference (0.7), technical (0.65), etc.
 - **Source**: manual (0.9), agent_end (0.7), session_end (0.6), auto-capture (0.6)
-- **Length**: Bonus for concise texts (50-200 characters)
+- **Length**: Bonus for concise texts (50-300 characters)
 - **Keywords**: Bonus for "important", "essential", "always", "never"
 - **Density**: Bonus for proper names, dates, numbers
 - **Penalties**: Questions, vague expressions ("I think", "maybe")
@@ -104,7 +122,10 @@ Advanced protection against prompt injection attacks:
 ### Automatic Garbage Collection
 
 - Configurable interval (default: 24 hours)
-- Deletes memories: age >30 days + importance <0.5 + hitCount <3
+- **Tier-aware** (v2.4.0):
+  - Core memories: **never deleted** (protected)
+  - Contextual memories: 2x maxAge, half minHitCount thresholds
+  - Episodic memories: normal thresholds
 - Initial GC runs 1 minute after startup
 - Preserves important or frequently used memories
 
@@ -377,7 +398,21 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.3.1 (Current)
+### v2.4.0 (Current)
+- **Performance Optimizations:**
+  - Debounced stats tracking (30s flush) - no disk I/O per operation
+  - LRU embedding cache (1000 entries, 1h TTL) - reduced API calls
+  - Batch hit count updates - efficient DB operations
+  - Vector exclusion from search results - memory bandwidth savings
+- **Features:**
+  - Auto-promotion on memory recall
+  - Tier-aware GC: core memories protected, contextual lenient thresholds
+  - Fixed importance formula (50-300 char sweet spot)
+- **Code Quality:**
+  - Modular structure (src/ directory)
+  - Reduced code duplication
+
+### v2.3.1
 - Improved capture filtering to reduce noise
 - Increased `captureMinChars` from 20 to 50
 - Added `minCaptureImportance` threshold (0.45)
@@ -425,4 +460,4 @@ ISC
 
 ---
 
-**Memory Claw v2.3.1 — Your memory, enhanced.**
+**Memory Claw v2.4.0 — Your memory, enhanced.**
