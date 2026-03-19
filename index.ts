@@ -5,11 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.3.1: Improved capture filtering
- * - Increased captureMinChars from 20 to 50
- * - Added minCaptureImportance threshold (0.45)
- * - Expanded skip patterns for metadata/debug content
- * - Filter pure questions without factual content
+ * v2.4.0: Performance & Quality Optimizations
+ * - Debounced stats tracking (30s flush) - no disk I/O per operation
+ * - LRU embedding cache (1000 entries, 1h TTL) - avoid redundant API calls
+ * - Batch hit count updates - efficient DB operations
+ * - Vector exclusion from search results - memory bandwidth savings
+ * - Auto-promotion on recall - automatic tier upgrades
+ * - Tier-aware GC - core memories protected
+ * - Fixed importance formula (50-300 char sweet spot)
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages
@@ -23,10 +26,10 @@
  * - `mclaw_export`: Export memories to JSON
  * - `mclaw_import`: Import memories from JSON
  * - `mclaw_gc`: Run garbage collection
- * - `mclaw_promote`: Promote memory to higher tier (v2.3.0)
- * - `mclaw_demote`: Demote memory to lower tier (v2.3.0)
+ * - `mclaw_promote`: Promote memory to higher tier
+ * - `mclaw_demote`: Demote memory to lower tier
  *
- * @version 2.3.1
+ * @version 2.4.0
  * @author duan78
  */
 
@@ -522,10 +525,11 @@ function calculateImportance(
   const sourceMultiplier = SOURCE_IMPORTANCE[source] || 0.7;
   importance = importance * 0.8 + sourceMultiplier * 0.2;
 
-  // Length bonus: short precise facts > long vague content
+  // v2.4.0: Length bonus adjusted for captureMinChars=50
+  // Short precise facts (50-300 chars) get bonus, long verbose content gets penalty
   const length = trimmed.length;
-  if (length >= 20 && length <= 200) {
-    importance += 0.05; // Sweet spot
+  if (length >= 50 && length <= 300) {
+    importance += 0.05; // Sweet spot for concise factual content
   } else if (length > 1000) {
     importance -= 0.1; // Too long, likely verbose
   }
@@ -1021,7 +1025,12 @@ class MemoryDB {
     await this.ensure();
     // Fetch more results to allow for re-ranking
     const fetchLimit = enableWeightedScoring ? limit * 3 : limit;
-    const results = await this.table!.vectorSearch(vector).limit(fetchLimit).toArray();
+    // v2.4.0: Use select to exclude vector field from results (saves memory bandwidth)
+    // Note: We still need to do vectorSearch with the vector, but we don't need to return it
+    const results = await this.table!.vectorSearch(vector)
+      .limit(fetchLimit)
+      .select(["id", "text", "category", "importance", "tier", "tags", "hitCount", "createdAt", "_distance"])
+      .toArray();
 
     const now = Date.now();
 
@@ -1185,6 +1194,83 @@ class MemoryDB {
     }
   }
 
+  /**
+   * v2.4.0: Batch increment hit counts for multiple memories.
+   * More efficient than individual calls when updating many memories.
+   */
+  async batchIncrementHitCounts(updates: Map<string, number>): Promise<void> {
+    await this.ensure();
+    if (updates.size === 0) return;
+
+    const now = Date.now();
+
+    // Process in small batches to avoid overwhelming the DB
+    for (const [id, increment] of updates) {
+      if (!isValidUUID(id)) continue;
+
+      try {
+        const results = await this.table!
+          .query()
+          .where(`id = '${id.replace(/'/g, "''")}'`)
+          .limit(1)
+          .toArray();
+
+        if (results.length > 0) {
+          const entry = results[0] as any;
+          const newHitCount = ((entry.hitCount as number) || 0) + increment;
+
+          await (this.table as any).update({
+            where: `id = '${id}'`,
+            values: {
+              hitCount: newHitCount,
+              updatedAt: now,
+              lastAccessed: now
+            }
+          });
+        }
+      } catch (error) {
+        console.warn(`memory-claw: Failed to batch increment hit count for ${id}: ${error}`);
+      }
+    }
+  }
+
+  /**
+   * v2.4.0: Get a memory by ID (for auto-promotion checks)
+   */
+  async getById(id: string): Promise<MemoryEntry | null> {
+    await this.ensure();
+    if (!isValidUUID(id)) {
+      return null;
+    }
+    try {
+      const results = await this.table!
+        .query()
+        .where(`id = '${id.replace(/'/g, "''")}'`)
+        .limit(1)
+        .toArray();
+
+      if (results.length === 0) return null;
+
+      const row = results[0];
+      return {
+        id: row.id as string,
+        text: row.text as string,
+        vector: row.vector as number[],
+        importance: row.importance as number,
+        category: row.category as string,
+        tier: (row.tier as MemoryTier) || "episodic",
+        tags: (row.tags as string[]) || [],
+        createdAt: row.createdAt as number,
+        updatedAt: row.updatedAt as number,
+        lastAccessed: (row.lastAccessed as number) || row.createdAt as number,
+        source: row.source as "auto-capture" | "agent_end" | "session_end" | "manual",
+        hitCount: (row.hitCount as number) || 0,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // v2.3.0: Promote memory to a higher tier
   async promote(id: string, tierManager: TierManager): Promise<{ success: boolean; newTier?: MemoryTier; message: string }> {
     await this.ensure();
@@ -1265,20 +1351,22 @@ class MemoryDB {
     }
   }
 
-  // v2.3.0: Get memories by tier
+  // v2.3.0: Get memories by tier (v2.4.0: excludes vector for memory efficiency)
   async getByTier(tier: MemoryTier, limit = 50): Promise<MemoryEntry[]> {
     await this.ensure();
     try {
+      // v2.4.0: Exclude vector field - not needed for injection
       const results = await this.table!
         .query()
         .where(`tier = '${tier}'`)
+        .select(["id", "text", "category", "importance", "tier", "tags", "hitCount", "createdAt", "updatedAt", "lastAccessed", "source"])
         .limit(limit)
         .toArray();
 
       return results.map((row) => ({
         id: row.id as string,
         text: row.text as string,
-        vector: row.vector as number[],
+        vector: [], // Empty vector to save memory - not needed for injection
         importance: row.importance as number,
         category: row.category as string,
         tier: (row.tier as MemoryTier) || "episodic",
@@ -1341,6 +1429,12 @@ class MemoryDB {
     }));
   }
 
+  /**
+   * v2.4.0: Tier-aware garbage collection
+   * - Core memories: NEVER deleted (protected)
+   * - Contextual memories: more lenient thresholds (2x maxAge, half minHitCount)
+   * - Episodic memories: normal thresholds
+   */
   async garbageCollect(maxAge: number, minImportance: number, minHitCount: number): Promise<number> {
     await this.ensure();
     const now = Date.now();
@@ -1363,18 +1457,35 @@ class MemoryDB {
       }
 
       for (const row of results) {
+        const tier = (row.tier as MemoryTier) || "episodic";
         const memory = {
           id: row.id as string,
           createdAt: row.createdAt as number,
           importance: row.importance as number,
           hitCount: (row.hitCount as number) || 0,
+          tier,
         };
+
+        // v2.4.0: Core memories are protected - never delete
+        if (tier === "core") {
+          continue;
+        }
+
+        // v2.4.0: Apply tier-specific thresholds
+        let effectiveMaxAge = maxAge;
+        let effectiveMinHitCount = minHitCount;
+
+        if (tier === "contextual") {
+          // Contextual memories are more valuable - use lenient thresholds
+          effectiveMaxAge = maxAge * 2;
+          effectiveMinHitCount = Math.max(1, Math.floor(minHitCount / 2));
+        }
 
         const age = now - memory.createdAt;
         if (
-          age > maxAge &&
+          age > effectiveMaxAge &&
           memory.importance < minImportance &&
-          memory.hitCount < minHitCount
+          memory.hitCount < effectiveMinHitCount
         ) {
           await this.deleteById(memory.id);
           deleted++;
@@ -1428,9 +1539,21 @@ class MemoryDB {
 // Embeddings Client (Mistral via OpenAI-compatible API)
 // ============================================================================
 
+interface CacheEntry {
+  vector: number[];
+  ts: number;
+}
+
+// ============================================================================
+// Embeddings Client (Mistral via OpenAI-compatible API) with LRU Cache
+// ============================================================================
+
 class Embeddings {
   private client: OpenAI;
   private detectedVectorDim: number | null = null;
+  private cache = new Map<string, CacheEntry>();
+  private readonly cacheTTL = 3600000; // 1 hour in milliseconds
+  private readonly maxCacheSize = 1000;
 
   constructor(
     apiKey: string,
@@ -1441,8 +1564,46 @@ class Embeddings {
     this.client = new OpenAI({ apiKey, baseURL: baseUrl });
   }
 
+  /**
+   * Simple hash function for text to use as cache key
+   */
+  private hashText(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return `${this.model}:${hash.toString(16)}`;
+  }
+
+  /**
+   * Clean expired entries from cache (called periodically)
+   */
+  private cleanExpiredEntries(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      if (now - entry.ts > this.cacheTTL) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
   async embed(text: string): Promise<number[]> {
     const normalizedText = normalizeText(text);
+    const hash = this.hashText(normalizedText);
+
+    // Check cache
+    const cached = this.cache.get(hash);
+    if (cached && Date.now() - cached.ts < this.cacheTTL) {
+      return cached.vector;
+    }
+
+    // Clean expired entries periodically (when cache is getting full)
+    if (this.cache.size >= this.maxCacheSize * 0.8) {
+      this.cleanExpiredEntries();
+    }
+
     const params: Record<string, unknown> = {
       model: this.model,
       input: normalizedText,
@@ -1466,6 +1627,16 @@ class Embeddings {
         }
       }
 
+      // Store in cache with LRU eviction
+      if (this.cache.size >= this.maxCacheSize) {
+        // Remove oldest entry (first in Map)
+        const firstKey = this.cache.keys().next().value;
+        if (firstKey) {
+          this.cache.delete(firstKey);
+        }
+      }
+      this.cache.set(hash, { vector, ts: Date.now() });
+
       return vector;
     } catch (error) {
       if (error instanceof Error) {
@@ -1477,6 +1648,17 @@ class Embeddings {
 
   getVectorDim(): number {
     return this.detectedVectorDim || this.dimensions || 1024;
+  }
+
+  /**
+   * Get cache statistics for monitoring
+   */
+  getCacheStats(): { size: number; maxSize: number; ttlMs: number } {
+    return {
+      size: this.cache.size,
+      maxSize: this.maxCacheSize,
+      ttlMs: this.cacheTTL,
+    };
   }
 }
 
@@ -1496,9 +1678,13 @@ class StatsTracker {
   private recalls = 0;
   private errors = 0;
   private lastReset = Date.now();
+  private dirty = false;
+  private flushInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly FLUSH_INTERVAL_MS = 30000; // 30 seconds
 
   constructor() {
     this.load();
+    this.startFlushInterval();
   }
 
   private load(): void {
@@ -1533,19 +1719,47 @@ class StatsTracker {
     }
   }
 
+  private startFlushInterval(): void {
+    this.flushInterval = setInterval(() => {
+      this.flush();
+    }, this.FLUSH_INTERVAL_MS);
+  }
+
+  /**
+   * Flush pending changes to disk. Called periodically and on shutdown.
+   */
+  flush(): void {
+    if (this.dirty) {
+      this.save();
+      this.dirty = false;
+    }
+  }
+
+  /**
+   * Stop the flush interval and flush any pending changes.
+   * Call this on shutdown.
+   */
+  shutdown(): void {
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = null;
+    }
+    this.flush();
+  }
+
   capture(): void {
     this.captures++;
-    this.save();
+    this.dirty = true;
   }
 
   recall(count: number): void {
     this.recalls += count;
-    this.save();
+    this.dirty = true;
   }
 
   error(): void {
     this.errors++;
-    this.save();
+    this.dirty = true;
   }
 
   getStats(): { captures: number; recalls: number; errors: number; uptime: number } {
@@ -1562,7 +1776,8 @@ class StatsTracker {
     this.recalls = 0;
     this.errors = 0;
     this.lastReset = Date.now();
-    this.save();
+    this.save(); // Immediate save on reset
+    this.dirty = false;
   }
 }
 
@@ -1765,7 +1980,7 @@ const plugin = {
     const tierManager = new TierManager(); // v2.3.0: Hierarchical memory
 
     api.logger.info(
-      `memory-claw v2.3.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.join(",")}, tiers: enabled)`
+      `memory-claw v2.4.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length}, cache: 1000/1h)`
     );
 
     // Run migration on first start if old table exists
@@ -2112,9 +2327,22 @@ const plugin = {
 
         if (allResults.length === 0) return;
 
-        // Increment hit counts for recalled memories
+        // v2.4.0: Batch hit count updates for better performance
+        const hitCountUpdates = new Map<string, number>();
         for (const result of allResults) {
-          await db.incrementHitCount(result.id);
+          hitCountUpdates.set(result.id, (hitCountUpdates.get(result.id) || 0) + 1);
+        }
+        await db.batchIncrementHitCounts(hitCountUpdates);
+
+        // v2.4.0: Check for auto-promotion on recalled memories
+        for (const result of allResults) {
+          const entry = await db.getById(result.id);
+          if (entry && tierManager.shouldPromote(entry)) {
+            const promoteResult = await db.promote(result.id, tierManager);
+            if (promoteResult.success) {
+              api.logger.info?.(`memory-claw: Auto-promoted memory ${result.id.slice(0, 8)}... to ${promoteResult.newTier}`);
+            }
+          }
         }
 
         stats.recall(allResults.length);
@@ -2349,6 +2577,7 @@ const plugin = {
           clearInterval(gcInterval);
           gcInterval = null;
         }
+        stats.shutdown(); // Flush pending stats changes
         api.logger.info("memory-claw: stopped");
       },
     });

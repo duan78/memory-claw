@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.3.1",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import. v2.3.1: Improved capture filtering (skip metadata, min importance threshold).",
+  "version": "2.4.0",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import. v2.4.0: Performance optimizations (debounced stats, embedding cache, batch updates), tier-aware GC, auto-promotion.",
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx test.ts"
