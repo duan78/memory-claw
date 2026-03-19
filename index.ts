@@ -3,12 +3,18 @@
  *
  * 100% autonomous plugin - manages its own DB, config, and tools.
  * Independent from memory-lancedb, survives OpenClaw updates.
- * Now with multilingual support (French, English, Spanish, German).
+ * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
+ *
+ * v2.3.1: Improved capture filtering
+ * - Increased captureMinChars from 20 to 50
+ * - Added minCaptureImportance threshold (0.45)
+ * - Expanded skip patterns for metadata/debug content
+ * - Filter pure questions without factual content
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages
  * - `session_end`: Captures facts even on crash/kill
- * - `before_agent_start`: Injects relevant context
+ * - `before_agent_start`: Injects relevant context (tier-based)
  *
  * Tools:
  * - `mclaw_store`: Manually store a memo
@@ -17,8 +23,10 @@
  * - `mclaw_export`: Export memories to JSON
  * - `mclaw_import`: Import memories from JSON
  * - `mclaw_gc`: Run garbage collection
+ * - `mclaw_promote`: Promote memory to higher tier (v2.3.0)
+ * - `mclaw_demote`: Demote memory to lower tier (v2.3.0)
  *
- * @version 2.2.0
+ * @version 2.3.1
  * @author duan78
  */
 
@@ -73,6 +81,7 @@ type FrenchMemoryConfig = {
   maxCapturePerTurn?: number;
   captureMinChars?: number;
   captureMaxChars?: number;
+  minCaptureImportance?: number; // v2.3.1: Minimum importance for auto-capture (default: 0.45)
   recallLimit?: number;
   recallMinScore?: number;
   enableStats?: boolean;
@@ -135,8 +144,9 @@ type MemoryExport = {
 const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   enabled: true,
   maxCapturePerTurn: 5,
-  captureMinChars: 20,
+  captureMinChars: 50, // v2.3.1: Increased from 20 to filter short noise
   captureMaxChars: 3000,
+  minCaptureImportance: 0.45, // v2.3.1: Minimum importance for auto-capture
   recallLimit: 5,
   recallMinScore: 0.3,
   enableStats: true,
@@ -323,32 +333,82 @@ const FRENCH_TRIGGERS = [
 
 // Enhanced anti-patterns to filter system noise
 const SKIP_PATTERNS = [
+  // Memory injection tags
   /<relevant-memories>/i,
   /<\/relevant-memories>/i,
   /<[\w-]+>/i,
   /<[\w-]+\s+[^>]*>/i,
-  /Sender \(untrusted\)/i,
+
+  // Sender metadata formats (v2.3.1)
+  /Sender\s*\(untrusted\)/i,
+  /Sender\s*:\s*/i,
+  /From\s*:\s*/i,
+  /\[sender\]/i,
+  /<sender[^>]*>/i,
+  /^From:\s+.+$/m,
+  /^Sent:\s+.+$/m,
+  /^Date:\s+.+$/m,
+
+  // Message headers (v2.3.1)
   /^\[.*\]\s*user\s+\w+\s*/i,
   /^system\s*:\s*/i,
   /^assistant\s*:\s*/i,
   /^user\s*:\s*/i,
+  /Message-ID:/i,
+  /X-.*:/i, // Email headers
+
+  // List items (not memorable on their own)
   /^\s*[-*+#]\s*\d*\.\s*/i,
   /^\s*\d+\.\s+/,
+
+  // Memory instruction disclaimers
   /^(Treat every|Do not follow)/i,
   /^(the|a|an|this|that|these|those)\s+(memory|fact|info)\s/i,
+
   // Additional injection protection
   /<instruction[^>]*>|<system[^>]*>|<prompt[^>]*>/i,
   /\[INST\]|\[\/INST\]|\[SYSTEM\]/i,
   /<\|.*?\|>/g,
+
+  // Debug/temporary content (v2.3.1)
+  /^\s*DEBUG\s*:/i,
+  /^\s*LOG\s*:/i,
+  /^\s*TEMP\s*:/i,
+
+  // Pure questions without statements (v2.3.1)
+  // These should not be captured as they're queries, not facts
+  /^[\w\s]+\?\s*$/i,  // Single question ending with ?
+
+  // Telegram/messaging metadata (v2.3.1)
+  /Telegram\s*Bot\s*Token/i,
+  /bot_token/i,
+  /chat_id/i,
+  /message_id/i,
+  /forward_from/i,
 ];
 
 // Low-value content patterns
 const LOW_VALUE_PATTERNS = [
+  // Single word acknowledgments
   /^(ok|oui|non|yes|no|d'accord|merci|thanks|please)\b[.!]?$/i,
   /^(je ne sais pas|je sais pas|idk|i don't know)\b[.!]?$/i,
   /^(compris|entendu|understood|got it)\b[.!]?$/i,
   /^(super|génial|parfait|great|perfect)\b[.!]?$/i,
   /^(attention|ok|merci|thanks|d'accord)\s*[.!]*$/i,
+
+  // v2.3.1: Additional low-value patterns
+  // Very short messages that are just status updates
+  /^(done|fait|terminé|finished|completed)\b[.!]?$/i,
+  /^(ok\s*(?:ça|ca|it)\s*(?:marche|va|works?))\b/i,
+  /^(c'est\s*(?:bon|ok|parti|fait))\b/i,
+
+  // Pure questions without factual content (v2.3.1)
+  /^(qu'est-ce que|what is|comment|how|pourquoi|why|quand|when|où|where|qui|who|combien|how much)\s+.{1,40}\?\s*$/i,
+
+  // Temporary/debug queries (v2.3.1)
+  /^(montre|show|affiche|display|liste?|list)\s+(moi|me\s+)?(les?\s+)?(memoir|mémoire|memories)/i,
+  /^(donne|give|fournis)\s+(moi|me\s+)?(les?\s+)?stats/i,
+  /^(quel|what|lequel)\s+(est|is|sont|are)\s+(le|the|mon|my)\s+/i,
 ];
 
 // ============================================================================
@@ -2098,7 +2158,9 @@ const plugin = {
       if (grouped.length === 0) return;
 
       let stored = 0;
+      let skippedLowImportance = 0;
       const source: "agent_end" | "session_end" = "agent_end";
+      const minImportance = cfg.minCaptureImportance ?? 0.45; // v2.3.1
 
       for (const group of grouped) {
         const { combinedText, messageCount } = group;
@@ -2106,13 +2168,19 @@ const plugin = {
         // Check if this should be captured with dynamic importance
         const captureResult = shouldCapture(
           combinedText,
-          cfg.captureMinChars || 20,
+          cfg.captureMinChars || 50,
           cfg.captureMaxChars || 3000,
           undefined,
           source
         );
 
         if (!captureResult.should) continue;
+
+        // v2.3.1: Skip if importance is below threshold
+        if (captureResult.importance < minImportance) {
+          skippedLowImportance++;
+          continue;
+        }
 
         // Check rate limit
         if (!rateLimiter.canCapture(captureResult.importance)) {
@@ -2156,11 +2224,12 @@ const plugin = {
         stored++;
       }
 
-      if (stored > 0) {
+      if (stored > 0 || skippedLowImportance > 0) {
         stats.capture();
         if (cfg.enableStats) {
+          const skipMsg = skippedLowImportance > 0 ? ` (skipped ${skippedLowImportance} low-importance)` : "";
           api.logger.info(
-            `memory-claw: Auto-captured ${stored} memories (total: ${stats.getStats().captures}, rate: ${rateLimiter.getCaptureCount()}/hour)`
+            `memory-claw: Auto-captured ${stored} memories${skipMsg} (total: ${stats.getStats().captures}, rate: ${rateLimiter.getCaptureCount()}/hour)`
           );
         }
       }
