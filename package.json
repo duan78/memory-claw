@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.2.0",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import.",
+  "version": "2.3.0",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Own DB, config, GC, export/import. v2.3.0: Hierarchical memory (core/contextual/episodic tiers).",
   "main": "index.js",
   "scripts": {
     "test": "node --import tsx test.ts"
@@ -24,6 +24,7 @@
     "openai": "^6.32.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
   }
 }
