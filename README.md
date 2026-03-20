@@ -1,4 +1,4 @@
-# Memory Claw v2.4.1
+# Memory Claw v2.4.2
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -398,7 +398,11 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.4.1 (Current)
+### v2.4.2 (Current)
+- **LanceDB Schema Fix:**
+  - Fixed schema inference for empty tags array - use `[""]` instead of `[]` to force string[] type
+
+### v2.4.1
 - **OpenClaw Compatibility Fix:**
   - Changed `isMemory: true` to `kind: "memory"` for proper memory slot detection
   - Using `api.pluginConfig` for correct config access (fallback to nested config for backward compatibility)
@@ -473,4 +477,4 @@ ISC
 
 ---
 
-**Memory Claw v2.4.1 — Your memory, enhanced.**
+**Memory Claw v2.4.2 — Your memory, enhanced.**

@@ -5,6 +5,9 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.2: LanceDB Schema Fix
+ * - Fixed schema inference for empty tags array (use [""] instead of [])
+ *
  * v2.4.1: OpenClaw Compatibility Fix
  * - Changed isMemory: true to kind: "memory" for proper memory slot detection
  * - Using api.pluginConfig for correct config access
@@ -35,7 +38,7 @@
  * - `mclaw_promote`: Promote memory to higher tier
  * - `mclaw_demote`: Demote memory to lower tier
  *
- * @version 2.4.1
+ * @version 2.4.2
  * @author duan78
  */
 
@@ -347,7 +350,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.1: Fixed OpenClaw compatibility with kind:memory. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.2: Fixed LanceDB schema inference for empty tags array. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -389,7 +392,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.1: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.2: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start

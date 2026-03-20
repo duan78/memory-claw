@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.0 - Database Module
+ * Memory Claw v2.4.2 - Database Module
+ *
+ * v2.4.2 improvements:
+ * - Fixed LanceDB schema inference for empty tags array
  *
  * v2.4.0 improvements:
  * - Batch hit count updates
@@ -7,7 +10,7 @@
  * - Tier-aware garbage collection
  * - Auto-promotion support
  *
- * @version 2.4.0
+ * @version 2.4.2
  * @author duan78
  */
 
@@ -57,7 +60,7 @@ export class MemoryDB {
           importance: 0,
           category: "other",
           tier: "episodic",
-          tags: [],
+          tags: [""],  // Non-empty array to force string[] type inference
           createdAt: 0,
           updatedAt: 0,
           lastAccessed: 0,
