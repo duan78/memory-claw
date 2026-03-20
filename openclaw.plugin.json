@@ -22,5 +22,112 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/duan78/memory-claw"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable or disable the plugin"
+      },
+      "embedding": {
+        "type": "object",
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "description": "Mistral API key (or use MISTRAL_API_KEY env var)"
+          },
+          "model": {
+            "type": "string",
+            "default": "mistral-embed",
+            "description": "Embedding model to use"
+          },
+          "baseUrl": {
+            "type": "string",
+            "default": "https://api.mistral.ai/v1",
+            "description": "Base URL for embedding API"
+          },
+          "dimensions": {
+            "type": "number",
+            "default": 1024,
+            "description": "Vector dimension for embeddings"
+          }
+        },
+        "required": ["apiKey"]
+      },
+      "dbPath": {
+        "type": "string",
+        "default": "~/.openclaw/memory/memory-claw",
+        "description": "Path to LanceDB database"
+      },
+      "locales": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["fr", "en", "es", "de", "zh", "it", "pt", "ru", "ja", "ko", "ar"],
+        "description": "Active locales for capture patterns"
+      },
+      "maxCapturePerTurn": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum memories captured per turn"
+      },
+      "captureMinChars": {
+        "type": "number",
+        "default": 50,
+        "description": "Minimum text length for capture"
+      },
+      "captureMaxChars": {
+        "type": "number",
+        "default": 3000,
+        "description": "Maximum text length for capture"
+      },
+      "minCaptureImportance": {
+        "type": "number",
+        "default": 0.45,
+        "description": "Minimum importance for auto-capture"
+      },
+      "recallLimit": {
+        "type": "number",
+        "default": 5,
+        "description": "Maximum memories recalled"
+      },
+      "recallMinScore": {
+        "type": "number",
+        "default": 0.3,
+        "description": "Minimum similarity score for recall"
+      },
+      "enableStats": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable statistics and detailed logs"
+      },
+      "gcInterval": {
+        "type": "number",
+        "default": 86400000,
+        "description": "GC interval in ms (default: 24h)"
+      },
+      "gcMaxAge": {
+        "type": "number",
+        "default": 2592000000,
+        "description": "Maximum memory age in ms (default: 30 days)"
+      },
+      "rateLimitMaxPerHour": {
+        "type": "number",
+        "default": 10,
+        "description": "Maximum captures per hour"
+      },
+      "enableWeightedRecall": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable weighted scoring for recall"
+      },
+      "enableDynamicImportance": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable dynamic importance calculation"
+      }
+    },
+    "required": ["embedding"]
   }
 }
