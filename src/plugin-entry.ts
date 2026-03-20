@@ -343,6 +343,7 @@ const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
   description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.0: Performance optimizations, tier-aware GC, auto-promotion. Supports 11 languages.",
+  isMemory: true,
 
   register(api: OpenClawPluginApi) {
     let pluginConfig = api.config?.plugins?.entries?.["memory-claw"]?.config as FrenchMemoryConfig | undefined;

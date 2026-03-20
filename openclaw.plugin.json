@@ -3,9 +3,10 @@
   "name": "MemoryClaw (Multilingual Memory)",
   "version": "2.4.0",
   "description": "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.0: Performance optimizations, tier-aware GC, auto-promotion. Supports 11 languages.",
+  "isMemory": true,
   "author": "duan78",
   "license": "ISC",
-  "main": "index.ts",
+  "main": "src/plugin-entry.ts",
   "type": "module",
   "engines": {
     "openclaw": ">=2025.0.0"

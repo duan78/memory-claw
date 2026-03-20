@@ -46,6 +46,8 @@ export class MemoryDB {
 
     if (tables.includes(TABLE_NAME)) {
       this.table = await this.db.openTable(TABLE_NAME);
+      // Migration: Add tier field to existing tables (v2.3.0+)
+      await this.migrateTierField();
     } else {
       this.table = await this.db.createTable(TABLE_NAME, [
         {
@@ -64,6 +66,42 @@ export class MemoryDB {
         },
       ]);
       await this.table.delete('id = "__schema__"');
+    }
+  }
+
+  /**
+   * Migration: Add tier field to existing memories (v2.3.0+)
+   * Sets tier = "episodic" for memories that don't have the field
+   */
+  private async migrateTierField(): Promise<void> {
+    if (!this.table) return;
+
+    try {
+      // Check if tier column exists by inspecting schema
+      const schema = await this.table.schema();
+      const hasTierField = schema.fields.some((f: any) => f.name === "tier");
+
+      if (!hasTierField) {
+        // Add tier field with default value to all existing rows
+        const existingRows = await this.table!.query().limit(10000).toArray();
+
+        if (existingRows.length > 0) {
+          // LanceDB doesn't support ALTER TABLE, so we need to add the field to each row
+          for (const row of existingRows) {
+            try {
+              await (this.table as any).update({
+                where: `id = '${(row as any).id}'`,
+                values: { tier: "episodic" }
+              });
+            } catch {
+              // Ignore individual update errors
+            }
+          }
+          console.log(`memory-claw: Migrated ${existingRows.length} memories with tier field`);
+        }
+      }
+    } catch (error) {
+      console.warn(`memory-claw: Tier migration check failed: ${error}`);
     }
   }
 
