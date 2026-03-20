@@ -5,6 +5,11 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.1: OpenClaw Compatibility Fix
+ * - Changed isMemory: true to kind: "memory" for proper memory slot detection
+ * - Using api.pluginConfig for correct config access
+ * - Added root index.ts entry point for OpenClaw plugin discovery
+ *
  * v2.4.0: Performance & Quality Optimizations
  * - Debounced stats tracking (30s flush)
  * - LRU embedding cache (1000 entries, 1h TTL)
@@ -30,7 +35,7 @@
  * - `mclaw_promote`: Promote memory to higher tier
  * - `mclaw_demote`: Demote memory to lower tier
  *
- * @version 2.4.0
+ * @version 2.4.1
  * @author duan78
  */
 
@@ -342,11 +347,15 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.0: Performance optimizations, tier-aware GC, auto-promotion. Supports 11 languages.",
-  isMemory: true,
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.1: Fixed OpenClaw compatibility with kind:memory. Supports 11 languages.",
+  kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
-    let pluginConfig = api.config?.plugins?.entries?.["memory-claw"]?.config as FrenchMemoryConfig | undefined;
+    let pluginConfig = api.pluginConfig as FrenchMemoryConfig | undefined;
+
+    if (!pluginConfig) {
+      pluginConfig = api.config?.plugins?.entries?.["memory-claw"]?.config as FrenchMemoryConfig | undefined;
+    }
 
     if (!pluginConfig) {
       pluginConfig = api.config?.plugins?.entries?.["memory-french"]?.config as FrenchMemoryConfig | undefined;
@@ -380,7 +389,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.0: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.1: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
