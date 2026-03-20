@@ -410,7 +410,13 @@ Memories are automatically categorized into 8 types:
   - Fixed importance formula (50-300 char sweet spot)
 - **Code Quality:**
   - Modular structure (src/ directory)
+  - Single entry point: `src/plugin-entry.ts`
   - Reduced code duplication
+- **Bug Fixes:**
+  - Fixed duplicate entry points causing module resolution errors
+  - Added DB migration for `tier` field on existing tables
+  - Added `isMemory: true` flag for OpenClaw memory slot detection
+  - Removed obsolete build artifacts from repository
 
 ### v2.3.1
 - Improved capture filtering to reduce noise
