@@ -40,7 +40,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { loadLocales, detectLanguage, getAvailableLocales, type LocalePatterns } from "../locales/index.js";
+import { loadLocales, detectLanguage, getAvailableLocales, type LocalePatterns } from "../locales/locales-loader.js";
 
 // Import modular components
 import type { FrenchMemoryConfig, MemoryEntry, MemoryTier, MemoryExport, SearchResult } from "./types.js";

@@ -42,7 +42,7 @@ import type * as LanceDB from "@lancedb/lancedb";
 import OpenAI from "openai";
 import { Type } from "@sinclair/typebox";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { loadLocales, detectLanguage as detectLocaleLanguage, getAvailableLocales, type LocalePatterns } from "./locales/index.js";
+import { loadLocales, detectLanguage as detectLocaleLanguage, getAvailableLocales, type LocalePatterns } from "./locales/locales-loader.js";
 
 // ============================================================================
 // Security Utilities
