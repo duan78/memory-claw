@@ -1,117 +1,26 @@
 {
   "id": "memory-claw",
-  "name": "Memory Claw Enhancer",
-  "version": "2.2.0",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. Manages its own DB, config, and tools. Intelligent patterns for tech/web/SEO context, hybrid deduplication, persistent statistics, automatic GC, JSON export/import, migration from memory-lancedb/memory-french. v2.2: Multilingual support (fr, en, es, de), automatic language detection, locale-specific patterns. Dynamic importance, weighted recall, multi-message capture, CLI commands, injection hardening. Hooks: agent_end, session_end, before_agent_start. Tools: memory_store, memory_recall, memory_forget, memory_export, memory_import, memory_gc. CLI: memory-claw list/search/stats/export/gc/clear.",
-  "configSchema": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "enabled": {
-        "type": "boolean",
-        "default": true,
-        "description": "Active ou désactive le plugin"
-      },
-      "embedding": {
-        "type": "object",
-        "description": "Configuration de l'API d'embeddings",
-        "properties": {
-          "apiKey": {
-            "type": "string",
-            "description": "Clé API pour le provider d'embeddings"
-          },
-          "model": {
-            "type": "string",
-            "default": "mistral-embed",
-            "description": "Modèle d'embeddings à utiliser"
-          },
-          "baseUrl": {
-            "type": "string",
-            "default": "https://api.mistral.ai/v1",
-            "description": "URL de base de l'API d'embeddings"
-          },
-          "dimensions": {
-            "type": "number",
-            "default": 1024,
-            "description": "Dimension des vecteurs d'embeddings"
-          }
-        },
-        "required": ["apiKey"]
-      },
-      "dbPath": {
-        "type": "string",
-        "default": "~/.openclaw/memory/memory-claw",
-        "description": "Chemin vers la base LanceDB du plugin"
-      },
-      "maxCapturePerTurn": {
-        "type": "number",
-        "default": 5,
-        "minimum": 1,
-        "maximum": 20,
-        "description": "Nombre maximum de mémos capturés par tour de conversation"
-      },
-      "captureMinChars": {
-        "type": "number",
-        "default": 20,
-        "minimum": 5,
-        "maximum": 100,
-        "description": "Longueur minimum du texte pour capture"
-      },
-      "captureMaxChars": {
-        "type": "number",
-        "default": 3000,
-        "minimum": 500,
-        "maximum": 10000,
-        "description": "Longueur maximum du texte pour capture"
-      },
-      "recallLimit": {
-        "type": "number",
-        "default": 5,
-        "minimum": 1,
-        "maximum": 20,
-        "description": "Nombre maximum de mémos rappelés"
-      },
-      "recallMinScore": {
-        "type": "number",
-        "default": 0.3,
-        "minimum": 0,
-        "maximum": 1,
-        "description": "Score minimum de similarité pour le rappel (0-1)"
-      },
-      "enableStats": {
-        "type": "boolean",
-        "default": true,
-        "description": "Active les statistiques et logs détaillés"
-      },
-      "gcInterval": {
-        "type": "number",
-        "default": 86400000,
-        "minimum": 3600000,
-        "description": "Intervalle entre les GC automatiques en ms (défaut: 24h)"
-      },
-      "gcMaxAge": {
-        "type": "number",
-        "default": 2592000000,
-        "minimum": 86400000,
-        "description": "Âge maximum des mémos avant GC en ms (défaut: 30 jours)"
-      },
-      "rateLimitMaxPerHour": {
-        "type": "number",
-        "default": 10,
-        "minimum": 1,
-        "maximum": 100,
-        "description": "Nombre maximum de captures par heure (défaut: 10)"
-      },
-      "enableWeightedRecall": {
-        "type": "boolean",
-        "default": true,
-        "description": "Active le rappel pondéré (similarité + importance + récence)"
-      },
-      "enableDynamicImportance": {
-        "type": "boolean",
-        "default": true,
-        "description": "Active le calcul dynamique de l'importance basé sur catégorie, longueur et contenu"
-      }
-    }
+  "name": "MemoryClaw (Multilingual Memory)",
+  "version": "2.4.0",
+  "description": "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.0: Performance optimizations, tier-aware GC, auto-promotion. Supports 11 languages.",
+  "author": "duan78",
+  "license": "ISC",
+  "main": "index.ts",
+  "type": "module",
+  "engines": {
+    "openclaw": ">=2025.0.0"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "memory",
+    "multilingual",
+    "lancedb",
+    "mistral",
+    "autonomous"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/duan78/memory-claw"
   }
 }
