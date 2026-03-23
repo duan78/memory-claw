@@ -6,7 +6,9 @@
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(export HOME=/root)",
+      "Bash(git config:*)"
     ]
   }
 }

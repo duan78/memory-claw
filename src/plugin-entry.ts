@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.14: CRITICAL FIX - SILENT STORE FAILURE
+ * - FIXED: Replaced OpenAI library with native fetch to avoid dimension bug
+ * - FIXED: OpenAI library was returning 256D with zeros instead of 1024D
+ * - FIXED: Added debug logging for vector dimension in processMessages
+ * - FIXED: Updated embeddings.ts fallback to use 1024D for mistral-embed
+ * - ROOT CAUSE: OpenAI library adds encoding_format: base64 causing malformed responses
+ *
  * v2.4.12: PRODUCTION CAPTURE FIX
  * - FIXED: Added DEBUG logging to diagnose production capture issues
  * - FIXED: Lowered minCaptureImportance from 0.45 to 0.30 for better capture rate
@@ -86,7 +93,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.12
+ * @version 2.4.14
  * @author duan78
  */
 
@@ -940,6 +947,12 @@ const plugin = {
 
           const category = detectCategory(combinedText);
           const vector = await embeddings.embed(combinedText);
+
+          // DEBUG: Log vector dimension to diagnose silent failures
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: Embedding vector dimension: ${vector.length}D`);
+          }
+
           const vectorMatches = await db.search(vector, 3, 0.90, false);
 
           let isDuplicate = false;
