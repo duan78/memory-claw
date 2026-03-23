@@ -457,7 +457,7 @@ const plugin = {
     let vectorDim = embedding.dimensions;
     if (!vectorDim) {
       if (model.includes("mistral-embed")) {
-        vectorDim = 256; // mistral-embed returns 256 dimensions
+        vectorDim = 1024; // mistral-embed returns 1024 dimensions
       } else if (model.includes("mistral")) {
         vectorDim = 1024; // Other Mistral models may use 1024
       } else {
