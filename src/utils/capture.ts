@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.7 - Capture Utilities
+ * Memory Claw v2.4.12 - Capture Utilities
+ *
+ * v2.4.12: Production capture fix
+ * - Lowered default minImportance from 0.45 to 0.30
+ * - Relaxed aggressive Telegram skip patterns that blocked legitimate conversations
  *
  * v2.4.7: Fixed RegExp global flag issue in injection patterns
  *
@@ -7,7 +11,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.7
+ * @version 2.4.12
  * @author duan78
  */
 
@@ -149,12 +153,12 @@ const SKIP_PATTERNS = [
   // Pure questions without statements (v2.3.1)
   /^[\w\s]+\?\s*$/i,
 
-  // Telegram/messaging metadata (v2.3.1)
-  /Telegram\s*Bot\s*Token/i,
-  /bot_token/i,
-  /chat_id/i,
-  /message_id/i,
-  /forward_from/i,
+  // v2.4.12: Relaxed Telegram patterns - only skip pure metadata lines, not actual conversations
+  // Old patterns were too aggressive and blocked legitimate user messages containing these terms
+  /(?:^|\s)Telegram\s*Bot\s*Token\s*(?:=|:)\s*\w+/i,
+  /(?:^|\s)bot_token\s*(?:=|:)\s*\w+/i,
+  /(?:^|\s)chat_id\s*(?:=|:)\s*-?\d+/i,
+  // Removed: message_id, forward_from - too broad, blocked valid conversations
 ];
 
 // Low-value content patterns
@@ -324,7 +328,7 @@ export function detectCategory(text: string): string {
 
 /**
  * Production capture function with proper filtering thresholds.
- * v2.4.6: Restored production thresholds after DEBUG phase.
+ * v2.4.12: Lowered default minImportance from 0.45 to 0.30 for better capture rate in production.
  */
 export function shouldCapture(
   text: string,
@@ -332,7 +336,7 @@ export function shouldCapture(
   maxChars: number,
   category?: string,
   source: MemorySource = "auto-capture",
-  minImportance: number = 0.45
+  minImportance: number = 0.30  // v2.4.12: Lowered from 0.45 to 0.30
 ): { should: boolean; importance: number; suspicion: number } {
   if (!text || typeof text !== "string") {
     return { should: false, importance: 0.5, suspicion: 0 };

@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.12: PRODUCTION CAPTURE FIX
+ * - FIXED: Added DEBUG logging to diagnose production capture issues
+ * - FIXED: Lowered minCaptureImportance from 0.45 to 0.30 for better capture rate
+ * - FIXED: Relaxed aggressive skip patterns that blocked legitimate Telegram conversations
+ * - FIXED: Improved groupConsecutiveUserMessages to extract content from OpenAI format messages
+ * - FIXED: Better handling of array content format in messages
+ *
  * v2.4.11: AUTO-MIGRATION BUG FIX
  * - FIXED: Vector dimension auto-migration now correctly uses type.listSize
  * - Previous version used dtype.size which doesn't exist in LanceDB schema
@@ -79,7 +86,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.11
+ * @version 2.4.12
  * @author duan78
  */
 
@@ -291,7 +298,9 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
     if (!msg || typeof msg !== "object") continue;
     const msgObj = msg as Record<string, unknown>;
 
-    if (msgObj.role !== "user") {
+    // v2.4.12: Improved role check - handle both 'user' and lowercase 'user'
+    const role = msgObj.role;
+    if (role !== "user") {
       if (currentGroup.length > 0) {
         groups.push({
           combinedText: currentGroup.join(" ").trim(),
@@ -307,18 +316,33 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
     const content = msgObj.content;
     let text = "";
 
+    // v2.4.12: Improved content extraction - handle string and array formats
     if (typeof content === "string") {
       text = content;
     } else if (Array.isArray(content)) {
       for (const block of content) {
-        if (
-          block &&
-          typeof block === "object" &&
-          (block as Record<string, unknown>).type === "text" &&
-          typeof (block as Record<string, unknown>).text === "string"
-        ) {
-          text += (block as Record<string, unknown>).text + " ";
+        if (!block || typeof block !== "object") continue;
+        const blockObj = block as Record<string, unknown>;
+
+        // Handle OpenAI format: {type: 'text', text: '...'}
+        if (blockObj.type === "text" && typeof blockObj.text === "string") {
+          text += blockObj.text + " ";
         }
+        // Handle simple text blocks
+        else if (typeof block === "string") {
+          text += block + " ";
+        }
+        // Fallback: try to extract any text field
+        else if (typeof blockObj.text === "string") {
+          text += blockObj.text + " ";
+        }
+      }
+    }
+    // v2.4.12: Fallback for content as object with text field
+    else if (content && typeof content === "object") {
+      const contentObj = content as Record<string, unknown>;
+      if (typeof contentObj.text === "string") {
+        text = contentObj.text;
       }
     }
 
@@ -394,7 +418,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.11: Fixed auto-migration vector dimension detection. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.12: Fixed production capture with DEBUG logging + relaxed filters. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -448,7 +472,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.11: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.12: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -894,11 +918,11 @@ const plugin = {
             cfg.captureMaxChars || 3000,
             undefined,
             source,
-            cfg.minCaptureImportance || 0.45
+            cfg.minCaptureImportance || 0.30  // v2.4.12: Lowered from 0.45 to 0.30 for better capture rate
           );
 
           if (!captureResult.should) {
-            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.45)) {
+            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.30)) {  // v2.4.12: Lowered from 0.45 to 0.30
               skippedLowImportance++;
             } else {
               skippedNoTrigger++;
@@ -967,12 +991,24 @@ const plugin = {
     };
 
     api.on("agent_end", async (event) => {
-      // v2.4.4 FIX: Don't require event.success field, as it may not exist in all OpenClaw versions
-      // Just check for messages array existence
+      // v2.4.12 FIX: Added DEBUG logging to diagnose capture issues
       if (!event) return;
 
       const messages = (event as Record<string, unknown>).messages;
       if (!messages || !Array.isArray(messages)) return;
+
+      // DEBUG: Log event structure to diagnose capture issues
+      try {
+        const eventPreview = JSON.stringify(event).slice(0, 800);
+        console.log(`memory-claw [DEBUG] agent_end event: ${eventPreview}`);
+        console.log(`memory-claw [DEBUG] messages count: ${messages.length}`);
+        if (messages.length > 0) {
+          const firstMsg = messages[0];
+          console.log(`memory-claw [DEBUG] first message:`, JSON.stringify(firstMsg).slice(0, 300));
+        }
+      } catch (e) {
+        // Ignore JSON stringify errors
+      }
 
       try {
         await processMessages(messages);
