@@ -5,6 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.15: ENHANCED CONTENT FILTERING
+ * - FIXED: Filter out JSON metadata blocks from captured content
+ * - FIXED: Extract only real user/assistant text from agent_end messages
+ * - FIXED: Improved shouldCapture() to filter JSON blocks and tool results
+ * - FIXED: Added 30-character minimum length enforcement
+ * - FIXED: Enhanced metadata header detection (sender, from, date, etc.)
+ * - FIXED: Filter out system messages and tool call results that are just code
+ *
  * v2.4.14: CRITICAL FIX - SILENT STORE FAILURE
  * - FIXED: Replaced OpenAI library with native fetch to avoid dimension bug
  * - FIXED: OpenAI library was returning 256D with zeros instead of 1024D
@@ -93,7 +101,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.14
+ * @version 2.4.15
  * @author duan78
  */
 
@@ -121,6 +129,7 @@ import {
   getAllSkipPatterns,
   getAllLowValuePatterns,
   shouldCapture,
+  isJsonMetadata,
   detectCategory,
   type LocalePatterns as CaptureLocalePatterns,
 } from "./utils/index.js";
@@ -296,6 +305,28 @@ interface GroupedMessage {
   timestamps: number[];
 }
 
+/**
+ * v2.4.15: Helper to filter out JSON metadata from message content
+ */
+function filterJsonMetadata(text: string): string {
+  if (!text || typeof text !== "string") return text;
+
+  // Remove JSON metadata blocks that may have been included in content
+  const lines = text.split("\n");
+  const filteredLines = lines.filter((line) => {
+    const trimmed = line.trim();
+    // Skip lines that look like JSON metadata
+    if (isJsonMetadata(trimmed)) return false;
+    // Skip lines that are just JSON keys
+    if (/^\s*"[^"]+"\s*:\s*/.test(trimmed)) return false;
+    // Skip code block markers
+    if (trimmed === "```json" || trimmed === "```") return false;
+    return true;
+  });
+
+  return filteredLines.join("\n").trim();
+}
+
 function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
   const groups: GroupedMessage[] = [];
   let currentGroup: string[] = [];
@@ -355,6 +386,8 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
 
     if (!text || typeof text !== "string") continue;
 
+    // v2.4.15: Filter out JSON metadata from extracted text
+    text = filterJsonMetadata(text);
     const trimmed = text.trim();
     if (!trimmed) continue;
 
@@ -425,7 +458,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.12: Fixed production capture with DEBUG logging + relaxed filters. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.15: Enhanced content filtering - JSON blocks, system messages, metadata headers filtered. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -479,7 +512,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.14: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.15: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start

@@ -1,5 +1,11 @@
 /**
- * Memory Claw v2.4.12 - Capture Utilities
+ * Memory Claw v2.4.15 - Capture Utilities
+ *
+ * v2.4.15: Enhanced content filtering
+ * - Added JSON metadata block detection and filtering
+ * - Added 30-character minimum length enforcement
+ * - Improved filtering for tool call results and system messages
+ * - Enhanced metadata header detection
  *
  * v2.4.12: Production capture fix
  * - Lowered default minImportance from 0.45 to 0.30
@@ -11,7 +17,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.12
+ * @version 2.4.15
  * @author duan78
  */
 
@@ -107,6 +113,7 @@ const FRENCH_TRIGGERS = [
 ];
 
 // Enhanced anti-patterns to filter system noise
+// v2.4.15: Added JSON block filtering and improved noise detection
 const SKIP_PATTERNS = [
   // Memory injection tags
   /<relevant-memories>/i,
@@ -159,6 +166,18 @@ const SKIP_PATTERNS = [
   /(?:^|\s)bot_token\s*(?:=|:)\s*\w+/i,
   /(?:^|\s)chat_id\s*(?:=|:)\s*-?\d+/i,
   // Removed: message_id, forward_from - too broad, blocked valid conversations
+
+  // v2.4.15: JSON metadata blocks and tool results
+  /^\s*\{[\s\S]*?"(role|content|tool|tool_calls|tool_call_id|function|arguments|result)"[\s\S]*?\}\s*$/i,
+  /^\s*\[[\s\S]*?"(role|content|tool|tool_calls)"[\s\S]*?\]\s*$/i,
+  /"(tool_call_id|function_arguments|function_name|result)"\s*:\s*/i,
+  /^\s*"(role|content)"\s*:\s*"(tool|system)"\s*[,}]/i,
+  /"tool_calls"\s*:\s*\[/i,
+
+  // v2.4.15: Metadata headers and system patterns
+  /^(timestamp|created_at|updated_at|id|uuid|message_id|session_id|parent_id)\s*[:=]\s*/i,
+  /^\s*(```json|```)\s*$/i,
+  /^\s*\{\s*"[^"]+"\s*:\s*\{/,
 ];
 
 // Low-value content patterns
@@ -327,8 +346,32 @@ export function detectCategory(text: string): string {
 }
 
 /**
+ * v2.4.15: Detect if text is a JSON metadata block or tool result
+ */
+export function isJsonMetadata(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const trimmed = text.trim();
+
+  // Check if it's a JSON object or array
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+
+  // Check for common JSON metadata fields
+  const jsonMetadataPatterns = [
+    /"(role|content|tool|tool_calls|tool_call_id|function|arguments|result|name)"\s*:/i,
+    /"tool_calls"\s*:\s*\[/i,
+    /^\s*\{\s*"(role|tool)"\s*:\s*"(system|tool)"\s*[,}]/i,
+  ];
+
+  for (const pattern of jsonMetadataPatterns) {
+    if (pattern.test(trimmed)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Production capture function with proper filtering thresholds.
- * v2.4.12: Lowered default minImportance from 0.45 to 0.30 for better capture rate in production.
+ * v2.4.15: Enhanced filtering for JSON blocks, system messages, and 30-char minimum.
  */
 export function shouldCapture(
   text: string,
@@ -344,8 +387,14 @@ export function shouldCapture(
 
   const normalized = normalizeText(text);
 
-  // Length check
-  if (!normalized || normalized.length < minChars || normalized.length > maxChars) {
+  // v2.4.15: Enforce minimum 30 character length
+  const MIN_LENGTH = 30;
+  if (!normalized || normalized.length < Math.max(MIN_LENGTH, minChars) || normalized.length > maxChars) {
+    return { should: false, importance: 0.5, suspicion: 0 };
+  }
+
+  // v2.4.15: Filter out JSON metadata blocks and tool results
+  if (isJsonMetadata(normalized)) {
     return { should: false, importance: 0.5, suspicion: 0 };
   }
 

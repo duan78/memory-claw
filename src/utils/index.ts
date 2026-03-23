@@ -1,5 +1,5 @@
 /**
- * Memory Claw v2.4.0 - Utilities Module
+ * Memory Claw v2.4.15 - Utilities Module
  */
 
 export { normalizeText, calculateTextSimilarity, escapeForPrompt } from "./text.js";
@@ -13,5 +13,6 @@ export {
   calculateInjectionSuspicion,
   detectCategory,
   shouldCapture,
+  isJsonMetadata,
   type LocalePatterns,
 } from "./capture.js";
