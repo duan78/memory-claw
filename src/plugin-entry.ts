@@ -5,6 +5,10 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.16: Z.AI ENDPOINT FIX
+ * - FIXED: Auto-correct Z.AI baseUrl to Mistral official API (api.z.ai/v1/embeddings = 404)
+ * - Z.AI API keys now automatically use https://api.mistral.ai/v1 endpoint
+ *
  * v2.4.15: ENHANCED CONTENT FILTERING
  * - FIXED: Filter out JSON metadata blocks from captured content
  * - FIXED: Extract only real user/assistant text from agent_end messages
@@ -101,7 +105,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.15
+ * @version 2.4.16
  * @author duan78
  */
 
@@ -458,7 +462,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.15: Enhanced content filtering - JSON blocks, system messages, metadata headers filtered. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.16: Z.AI endpoint fix - auto-corrects api.z.ai to official Mistral API. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {

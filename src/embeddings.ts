@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.14 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.16 - Embeddings Client with LRU Cache
+ *
+ * v2.4.16 improvements:
+ * - CRITICAL FIX: Z.AI endpoint auto-correction - api.z.ai/v1/embeddings returns 404
+ * - Automatically redirects Z.AI baseUrl to Mistral official API (api.mistral.ai/v1)
  *
  * v2.4.14 improvements:
  * - CRITICAL FIX: Use native fetch instead of OpenAI library to avoid dimension bug
@@ -22,7 +26,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.14
+ * @version 2.4.16
  * @author duan78
  */
 
@@ -48,7 +52,14 @@ export class Embeddings {
     private dimensions?: number
   ) {
     this.apiKey = apiKey;
-    this.baseUrl = baseUrl || "https://api.mistral.ai/v1";
+    // FIX: Z.AI keys should use Mistral official endpoint, not api.z.ai
+    // Z.AI's /embeddings endpoint returns 404, must use Mistral's API directly
+    if (baseUrl && baseUrl.includes("api.z.ai")) {
+      console.warn("memory-claw: Z.AI endpoint detected, switching to Mistral official API (api.z.ai/v1/embeddings returns 404)");
+      this.baseUrl = "https://api.mistral.ai/v1";
+    } else {
+      this.baseUrl = baseUrl || "https://api.mistral.ai/v1";
+    }
   }
 
   /**
