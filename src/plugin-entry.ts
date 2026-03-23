@@ -479,7 +479,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.12: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.14: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
