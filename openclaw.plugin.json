@@ -1,8 +1,8 @@
 {
   "id": "memory-claw",
   "name": "MemoryClaw (Multilingual Memory)",
-  "version": "2.4.3",
-  "description": "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.3: Fixed low capture rate, added LanceDB compaction, improved error tracking. Supports 11 languages.",
+  "version": "2.4.4",
+  "description": "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.4: Critical bug fixes - removed double importance filter, improved hooks, better error logging, fixed stats persistence. Supports 11 languages.",
   "kind": "memory",
   "author": "duan78",
   "license": "ISC",

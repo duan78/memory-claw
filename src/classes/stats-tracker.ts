@@ -1,13 +1,13 @@
 /**
- * Memory Claw v2.4.0 - Statistics Tracker with Debounce
+ * Memory Claw v2.4.4 - Statistics Tracker with Improved Persistence
  *
- * v2.4.0: Added debounce to avoid disk I/O on every operation.
- * Stats are now only flushed to disk:
- * - Every 30 seconds if dirty
- * - On shutdown (call shutdown())
- * - On explicit reset
+ * v2.4.4 improvements:
+ * - Immediate flush for critical operations (capture)
+ * - Better error logging with stack traces
+ * - More frequent saves to prevent data loss
+ * - Logging when stats are saved/loaded
  *
- * @version 2.4.0
+ * @version 2.4.4
  * @author duan78
  */
 
@@ -38,6 +38,7 @@ export class StatsTracker {
   constructor() {
     this.load();
     this.startFlushInterval();
+    console.log("memory-claw: StatsTracker initialized");
   }
 
   private load(): void {
@@ -49,9 +50,13 @@ export class StatsTracker {
         this.errors = data.errors || 0;
         this.lastReset = data.lastReset || Date.now();
         this.recentErrors = (data.recentErrors || []).slice(0, this.MAX_RECENT_ERRORS);
+        console.log(`memory-claw: Stats loaded - captures: ${this.captures}, recalls: ${this.recalls}, errors: ${this.errors}`);
+      } else {
+        console.log("memory-claw: No existing stats file found, starting fresh");
       }
     } catch (error) {
       console.warn(`memory-claw: Failed to load stats: ${error}`);
+      console.error("Stats load error details:", error);
     }
   }
 
@@ -69,8 +74,13 @@ export class StatsTracker {
         recentErrors: this.recentErrors,
       };
       writeFileSync(STATS_PATH, JSON.stringify(data, null, 2));
+      // v2.4.4: Log when stats are saved
+      console.log(`memory-claw: Stats saved - captures: ${this.captures}, recalls: ${this.recalls}, errors: ${this.errors}`);
     } catch (error) {
-      console.warn(`memory-claw: Failed to save stats: ${error}`);
+      console.error(`memory-claw: Failed to save stats: ${error}`);
+      if (error instanceof Error && error.stack) {
+        console.error("Stack trace:", error.stack);
+      }
     }
   }
 
@@ -104,6 +114,8 @@ export class StatsTracker {
   capture(): void {
     this.captures++;
     this.dirty = true;
+    // v2.4.4: Immediate flush for captures to prevent data loss
+    this.flush();
   }
 
   recall(count: number): void {
@@ -124,6 +136,8 @@ export class StatsTracker {
     if (this.recentErrors.length > this.MAX_RECENT_ERRORS) {
       this.recentErrors = this.recentErrors.slice(-this.MAX_RECENT_ERRORS);
     }
+    // v2.4.4: Log errors immediately with details
+    console.error(`memory-claw: Error in ${operation}: ${message}`);
   }
 
   getStats(): { captures: number; recalls: number; errors: number; uptime: number; recentErrors: Array<{ timestamp: number; message: string; operation: string }> } {

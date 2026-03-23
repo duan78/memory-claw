@@ -10,7 +10,8 @@
     "noEmit": true,
     "declaration": false,
     "outDir": "./dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "types": []
   },
   "include": ["index.ts", "src/**/*.ts", "locales/**/*.ts"],
   "exclude": ["node_modules", "dist"]
