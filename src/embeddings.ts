@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.6 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.7 - Embeddings Client with LRU Cache
+ *
+ * v2.4.7 improvements:
+ * - Fixed dimensions parameter condition
+ * - Improved vector dimension fallback
  *
  * v2.4.6 improvements:
  * - Improved hash function to reduce collision risk
@@ -10,7 +14,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.6
+ * @version 2.4.7
  * @author duan78
  */
 
@@ -85,7 +89,7 @@ export class Embeddings {
       input: normalizedText,
     };
 
-    if (this.dimensions && !this.baseUrl) {
+    if (this.dimensions) {
       params.dimensions = this.dimensions;
     }
 
@@ -123,7 +127,7 @@ export class Embeddings {
   }
 
   getVectorDim(): number {
-    return this.detectedVectorDim || this.dimensions || 1024;
+    return this.detectedVectorDim || (this.dimensions && this.dimensions > 0 ? this.dimensions : 1024);
   }
 
   /**

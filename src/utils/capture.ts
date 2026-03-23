@@ -1,10 +1,13 @@
 /**
- * Memory Claw v2.4.6 - Capture Utilities
+ * Memory Claw v2.4.7 - Capture Utilities
+ *
+ * v2.4.7: Fixed RegExp global flag issue in injection patterns
  *
  * v2.4.6: Production release - removed DEBUG logging, restored proper thresholds
+ *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.6
+ * @version 2.4.7
  * @author duan78
  */
 
@@ -136,7 +139,7 @@ const SKIP_PATTERNS = [
   // Additional injection protection
   /<instruction[^>]*>|<system[^>]*>|<prompt[^>]*>/i,
   /\[INST\]|\[\/INST\]|\[SYSTEM\]/i,
-  /<\|.*?\|>/g,
+  /<\|.*?\|>/,
 
   // Debug/temporary content (v2.3.1)
   /^\s*DEBUG\s*:/i,

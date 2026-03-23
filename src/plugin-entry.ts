@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.7: Bug Fixes & Performance Improvements
+ * - FIXED: Reversed condition for embeddings dimensions parameter
+ * - FIXED: Division by zero risk in word overlap calculation
+ * - FIXED: RegExp global flag causing state issues in loops
+ * - FIXED: Improved vector dimension fallback validation
+ * - OPTIMIZED: Batch hit count queries using single OR clause
+ *
  * v2.4.6: Production Release & Optimizations
  * - FIXED: Version consistency (package.json now matches code)
  * - FIXED: Removed DEBUG logging from production build
@@ -63,7 +70,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.6
+ * @version 2.4.7
  * @author duan78
  */
 
@@ -318,8 +325,11 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
       const lastWords = new Set(lastText.split(/\s+/).filter((w) => w.length > 4));
       const currentWords = new Set(currentText.split(/\s+/).filter((w) => w.length > 4));
 
+      const maxWords = Math.max(lastWords.size, currentWords.size);
+      if (maxWords === 0) continue; // Skip if no significant words
+
       const intersection = new Set([...lastWords].filter((x) => currentWords.has(x)));
-      const overlap = intersection.size / Math.max(lastWords.size, currentWords.size);
+      const overlap = intersection.size / maxWords;
 
       if (overlap > 0.3) {
         currentGroup.push(trimmed);
@@ -375,7 +385,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.6: Production release with optimizations. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.7: Bug fixes and performance improvements. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -417,7 +427,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.6: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.7: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start

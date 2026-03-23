@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.6 - Database Module
+ * Memory Claw v2.4.7 - Database Module
+ *
+ * v2.4.7 improvements:
+ * - Optimized batch query operations with single OR query
+ * - Improved batch hit count performance
  *
  * v2.4.6 improvements:
  * - Optimized batch query operations
@@ -20,7 +24,7 @@
  * - Tier-aware garbage collection
  * - Auto-promotion support
  *
- * @version 2.4.6
+ * @version 2.4.7
  * @author duan78
  */
 
@@ -313,24 +317,23 @@ export class MemoryDB {
     if (ids.length === 0) return;
 
     try {
-      // Fetch all entries in parallel
-      const fetchPromises = ids.map(async (id) => {
-        try {
-          const results = await this.table!
-            .query()
-            .where(`id = '${id.replace(/'/g, "''")}'`)
-            .limit(1)
-            .toArray();
-          return { id, entry: results.length > 0 ? (results[0] as any) : null };
-        } catch {
-          return { id, entry: null };
-        }
-      });
+      // v2.4.7: Optimize by fetching all entries in a single query with OR clause
+      const orClause = ids.map((id) => `id = '${id.replace(/'/g, "''")}'`).join(' OR ');
+      const results = await this.table!
+        .query()
+        .where(orClause)
+        .limit(ids.length)
+        .toArray();
 
-      const entries = await Promise.all(fetchPromises);
+      // Create a map of existing entries for quick lookup
+      const entryMap = new Map<string, any>();
+      for (const row of results) {
+        entryMap.set((row as any).id, row);
+      }
 
-      // Update entries in batch (reduce individual transactions)
-      const updatePromises = entries.map(async ({ id, entry }) => {
+      // Update entries that exist
+      const updatePromises = ids.map(async (id) => {
+        const entry = entryMap.get(id);
         if (!entry) return;
 
         const increment = updates.get(id) || 0;

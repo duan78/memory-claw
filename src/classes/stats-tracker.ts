@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.6 - Statistics Tracker with Improved Persistence
+ * Memory Claw v2.4.7 - Statistics Tracker with Improved Persistence
+ *
+ * v2.4.7 improvements:
+ * - Version bump for bug fix release
  *
  * v2.4.6 improvements:
  * - Cleaner logging for production
@@ -10,7 +13,7 @@
  * - More frequent saves to prevent data loss
  * - Logging when stats are saved/loaded
  *
- * @version 2.4.6
+ * @version 2.4.7
  * @author duan78
  */
 
