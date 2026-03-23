@@ -1,6 +1,6 @@
 {
   "name": "memory-claw",
-  "version": "2.4.10",
+  "version": "2.4.11",
   "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings.",
   "main": "index.ts",
   "scripts": {

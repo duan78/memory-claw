@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.10 - Database Module
+ * Memory Claw v2.4.11 - Database Module
+ *
+ * v2.4.11 improvements:
+ * - FIXED: Auto-migration now correctly detects vector dimension using type.listSize
  *
  * v2.4.10 improvements:
  * - Auto-migrate vector dimension mismatch on startup
@@ -27,7 +30,7 @@
  * - Tier-aware garbage collection
  * - Auto-promotion support
  *
- * @version 2.4.10
+ * @version 2.4.11
  * @author duan78
  */
 
@@ -70,9 +73,11 @@ export class MemoryDB {
       // v2.4.10: Check vector dimension and auto-migrate if mismatch
       const schema = await this.table.schema();
       const vectorField = schema.fields.find((f: any) => f.name === "vector");
-      if (vectorField && (vectorField as any).dtype) {
-        // LanceDB stores fixed size list vectors - check the dimension
-        const actualDim = (vectorField as any).dtype?.size || 0;
+      if (vectorField && (vectorField as any).type) {
+        // LanceDB stores FixedSizeList as typeId 16 with listSize property
+        const fieldType = (vectorField as any).type;
+        // FixedSizeList has typeId 16 and listSize contains the dimension
+        const actualDim = (fieldType.typeId === 16 && fieldType.listSize) || 0;
         if (actualDim !== this.vectorDim) {
           console.warn(`memory-claw: Vector dimension mismatch detected! Expected ${this.vectorDim}D, found ${actualDim}D. Recreating table...`);
           // Drop the old table

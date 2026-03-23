@@ -5,6 +5,10 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.11: AUTO-MIGRATION BUG FIX
+ * - FIXED: Vector dimension auto-migration now correctly uses type.listSize
+ * - Previous version used dtype.size which doesn't exist in LanceDB schema
+ *
  * v2.4.9: CRITICAL BUG FIXES
  * - FIXED: Corrected mistral-embed vector dimension (256 not 1024)
  * - FIXED: Updated dimension detection logic for all models
@@ -75,7 +79,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.9
+ * @version 2.4.11
  * @author duan78
  */
 
@@ -390,7 +394,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.9: Critical bug fixes for vector dimensions. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.11: Fixed auto-migration vector dimension detection. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -444,7 +448,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.9: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.11: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
