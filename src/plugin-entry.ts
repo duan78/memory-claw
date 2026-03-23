@@ -961,6 +961,19 @@ const plugin = {
             cfg.minCaptureImportance || 0.30  // v2.4.12: Lowered from 0.45 to 0.30 for better capture rate
           );
 
+          // v2.4.15: DEBUG - Log why messages are being filtered
+          if (cfg.enableStats) {
+            const preview = combinedText.slice(0, 80).replace(/\n/g, " ");
+            if (!captureResult.should) {
+              const reason = captureResult.importance < (cfg.minCaptureImportance || 0.30)
+                ? `low importance (${captureResult.importance.toFixed(2)})`
+                : `filtered (importance: ${captureResult.importance.toFixed(2)})`;
+              api.logger.info(`memory-claw: SKIPPED [${reason}]: "${preview}..."`);
+            } else {
+              api.logger.info(`memory-claw: CAPTURING (importance: ${captureResult.importance.toFixed(2)}): "${preview}..."`);
+            }
+          }
+
           if (!captureResult.should) {
             if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.30)) {  // v2.4.12: Lowered from 0.45 to 0.30
               skippedLowImportance++;

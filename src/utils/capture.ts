@@ -167,17 +167,17 @@ const SKIP_PATTERNS = [
   /(?:^|\s)chat_id\s*(?:=|:)\s*-?\d+/i,
   // Removed: message_id, forward_from - too broad, blocked valid conversations
 
-  // v2.4.15: JSON metadata blocks and tool results
-  /^\s*\{[\s\S]*?"(role|content|tool|tool_calls|tool_call_id|function|arguments|result)"[\s\S]*?\}\s*$/i,
-  /^\s*\[[\s\S]*?"(role|content|tool|tool_calls)"[\s\S]*?\]\s*$/i,
-  /"(tool_call_id|function_arguments|function_name|result)"\s*:\s*/i,
-  /^\s*"(role|content)"\s*:\s*"(tool|system)"\s*[,}]/i,
-  /"tool_calls"\s*:\s*\[/i,
+  // v2.4.15: JSON metadata blocks - FIXED to be more specific and avoid false positives
+  // Only skip lines that are pure JSON metadata (tool calls, system messages)
+  // Don't skip legitimate user messages that happen to contain JSON-like content
+  /^\s*\{\s*"role"\s*:\s*"tool"/i,
+  /^\s*\{\s*"role"\s*:\s*"system"/i,
+  /^\s*\{\s*"tool_call_id"/i,
+  /^\s*\{\s*"function"/i,
 
-  // v2.4.15: Metadata headers and system patterns
-  /^(timestamp|created_at|updated_at|id|uuid|message_id|session_id|parent_id)\s*[:=]\s*/i,
+  // v2.4.15: Metadata headers and system patterns - FIXED to be less aggressive
+  /^(timestamp|created_at|updated_at|id|uuid|message_id|session_id|parent_id)\s*[:=]\s*\d+/i,
   /^\s*(```json|```)\s*$/i,
-  /^\s*\{\s*"[^"]+"\s*:\s*\{/,
 ];
 
 // Low-value content patterns
@@ -347,19 +347,32 @@ export function detectCategory(text: string): string {
 
 /**
  * v2.4.15: Detect if text is a JSON metadata block or tool result
+ *
+ * FIXED: Made detection more specific to avoid false positives
+ * - Only filter pure JSON objects (not text containing JSON snippets)
+ * - Check for role: tool/system specifically
+ * - Check for tool_calls fields
  */
 export function isJsonMetadata(text: string): boolean {
   if (!text || typeof text !== "string") return false;
   const trimmed = text.trim();
 
-  // Check if it's a JSON object or array
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  // Must be a complete JSON object or array (start AND end with braces)
+  if (!(trimmed.startsWith("{") && trimmed.endsWith("}")) &&
+      !(trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    return false;
+  }
 
-  // Check for common JSON metadata fields
+  // Check for specific JSON metadata patterns that indicate system/tool content
   const jsonMetadataPatterns = [
-    /"(role|content|tool|tool_calls|tool_call_id|function|arguments|result|name)"\s*:/i,
+    // Tool call results: has tool_call_id, result, or function fields at top level
+    /"(tool_call_id|function|function_name|function_arguments|result)"\s*:/i,
+    // System messages with role: system
+    /"role"\s*:\s*"system"/i,
+    // Tool role (not user/assistant)
+    /"role"\s*:\s*"tool"/i,
+    // tool_calls array
     /"tool_calls"\s*:\s*\[/i,
-    /^\s*\{\s*"(role|tool)"\s*:\s*"(system|tool)"\s*[,}]/i,
   ];
 
   for (const pattern of jsonMetadataPatterns) {
