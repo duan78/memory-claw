@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.7 - Database Module
+ * Memory Claw v2.4.10 - Database Module
+ *
+ * v2.4.10 improvements:
+ * - Auto-migrate vector dimension mismatch on startup
  *
  * v2.4.7 improvements:
  * - Optimized batch query operations with single OR query
@@ -24,7 +27,7 @@
  * - Tier-aware garbage collection
  * - Auto-promotion support
  *
- * @version 2.4.7
+ * @version 2.4.10
  * @author duan78
  */
 
@@ -63,6 +66,40 @@ export class MemoryDB {
 
     if (tables.includes(TABLE_NAME)) {
       this.table = await this.db.openTable(TABLE_NAME);
+
+      // v2.4.10: Check vector dimension and auto-migrate if mismatch
+      const schema = await this.table.schema();
+      const vectorField = schema.fields.find((f: any) => f.name === "vector");
+      if (vectorField && (vectorField as any).dtype) {
+        // LanceDB stores fixed size list vectors - check the dimension
+        const actualDim = (vectorField as any).dtype?.size || 0;
+        if (actualDim !== this.vectorDim) {
+          console.warn(`memory-claw: Vector dimension mismatch detected! Expected ${this.vectorDim}D, found ${actualDim}D. Recreating table...`);
+          // Drop the old table
+          await this.db.dropTable(TABLE_NAME);
+          // Create new table with correct dimension
+          this.table = await this.db.createTable(TABLE_NAME, [
+            {
+              id: "__schema__",
+              text: "",
+              vector: Array.from({ length: this.vectorDim }).fill(0),
+              importance: 0,
+              category: "other",
+              tier: "episodic",
+              tags: [""],  // Non-empty array to force string[] type inference
+              createdAt: 0,
+              updatedAt: 0,
+              lastAccessed: 0,
+              source: "manual",
+              hitCount: 0,
+            },
+          ]);
+          await this.table.delete('id = "__schema__"');
+          console.warn(`memory-claw: Table recreated with correct vector dimension (${this.vectorDim}D)`);
+          return;
+        }
+      }
+
       // Migration: Add tier field to existing tables (v2.3.0+)
       await this.migrateTierField();
     } else {
