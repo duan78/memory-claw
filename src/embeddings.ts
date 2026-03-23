@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.7 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.9 - Embeddings Client with LRU Cache
+ *
+ * v2.4.9 improvements:
+ * - CRITICAL FIX: Corrected default vector dimension for mistral-embed (256 not 1024)
+ * - Improved dimension detection with proper fallback
  *
  * v2.4.7 improvements:
  * - Fixed dimensions parameter condition
@@ -14,7 +18,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.7
+ * @version 2.4.9
  * @author duan78
  */
 
@@ -128,6 +132,10 @@ export class Embeddings {
   }
 
   getVectorDim(): number {
+    // CRITICAL FIX: mistral-embed returns 256 dimensions, not 1024
+    if (this.model.includes("mistral-embed")) {
+      return this.detectedVectorDim || this.dimensions || 256;
+    }
     return this.detectedVectorDim || (this.dimensions && this.dimensions > 0 ? this.dimensions : 1024);
   }
 

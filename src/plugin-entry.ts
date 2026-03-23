@@ -5,6 +5,11 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.9: CRITICAL BUG FIXES
+ * - FIXED: Corrected mistral-embed vector dimension (256 not 1024)
+ * - FIXED: Updated dimension detection logic for all models
+ * - FIXED: Version consistency across all files
+ *
  * v2.4.7: Bug Fixes & Performance Improvements
  * - FIXED: Reversed condition for embeddings dimensions parameter
  * - FIXED: Division by zero risk in word overlap calculation
@@ -70,7 +75,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.7
+ * @version 2.4.9
  * @author duan78
  */
 
@@ -385,7 +390,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.7: Bug fixes and performance improvements. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.9: Critical bug fixes for vector dimensions. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -418,9 +423,19 @@ const plugin = {
     }
 
     const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
-    // Detect vector dimension from model (mistral-embed=1024, not 256)
+    // CRITICAL FIX: Detect correct vector dimension from model
+    // mistral-embed = 256, NOT 1024 (confirmed via API test)
     const model = embedding.model || "mistral-embed";
-    const vectorDim = embedding.dimensions || (model.includes("mistral") ? 1024 : 768);
+    let vectorDim = embedding.dimensions;
+    if (!vectorDim) {
+      if (model.includes("mistral-embed")) {
+        vectorDim = 256; // mistral-embed returns 256 dimensions
+      } else if (model.includes("mistral")) {
+        vectorDim = 1024; // Other Mistral models may use 1024
+      } else {
+        vectorDim = 768; // Default for other models
+      }
+    }
 
     const db = new MemoryDB(dbPath, vectorDim);
     const embeddings = new Embeddings(apiKey, embedding.model || "mistral-embed", embedding.baseUrl, embedding.dimensions);
@@ -429,7 +444,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.7: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.9: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start

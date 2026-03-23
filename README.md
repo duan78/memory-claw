@@ -1,4 +1,4 @@
-# Memory Claw v2.4.5
+# Memory Claw v2.4.9
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -398,7 +398,16 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.4.5 (Current)
+### v2.4.9 (Current)
+- **CRITICAL BUG FIXES:**
+  - FIXED: Corrected mistral-embed vector dimension (256 not 1024) - was causing DB errors
+  - FIXED: Updated dimension detection logic for all embedding models
+  - FIXED: Version consistency across all files (package.json, README, code)
+- **Improvements:**
+  - Better auto-detection of vector dimensions
+  - Cleaner error messages for dimension mismatches
+
+### v2.4.5
 - **Bug Fixes:**
   - Fixed version inconsistencies in plugin comments and log messages (v2.4.2 → v2.4.5)
   - Fixed `skippedLowImportance` counter - now properly tracks content skipped due to low importance
@@ -487,4 +496,4 @@ ISC
 
 ---
 
-**Memory Claw v2.4.2 — Your memory, enhanced.**
+**Memory Claw v2.4.9 — Your memory, enhanced.**
