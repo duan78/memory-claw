@@ -1,7 +1,9 @@
 /**
- * Memory Claw v2.4.0 - Capture Utilities
+ * Memory Claw v2.4.3 - Capture Utilities
  *
- * @version 2.4.0
+ * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
+ *
+ * @version 2.4.3
  * @author duan78
  */
 
@@ -318,6 +320,11 @@ export function detectCategory(text: string): string {
 
 /**
  * Determine if text should be captured
+ *
+ * v2.4.3: Relaxed capture logic to improve capture rate:
+ * - Trigger patterns are now optional (only boosts importance, not required)
+ * - Any non-trivial content with sufficient importance can be captured
+ * - Questions without factual content are still filtered out
  */
 export function shouldCapture(
   text: string,
@@ -347,13 +354,23 @@ export function shouldCapture(
     return { should: false, importance: 0.5, suspicion };
   }
 
-  if (!getAllTriggers().some((r) => r.test(normalized))) {
-    return { should: false, importance: 0.5, suspicion };
+  // Calculate dynamic importance first
+  const detectedCategory = category || detectCategory(normalized);
+  let importance = calculateImportance(normalized, detectedCategory, source);
+
+  // v2.4.3: Trigger patterns now boost importance instead of being required
+  // This allows more content to be captured while still prioritizing important info
+  const hasTrigger = getAllTriggers().some((r) => r.test(normalized));
+  if (hasTrigger) {
+    importance = Math.min(1.0, importance + 0.15); // Boost importance for triggered content
   }
 
-  // Calculate dynamic importance
-  const detectedCategory = category || detectCategory(normalized);
-  const importance = calculateImportance(normalized, detectedCategory, source);
+  // v2.4.3: Capture if content has sufficient importance, regardless of trigger match
+  // This fixes the issue where only 2 captures occurred out of hundreds of messages
+  // Minimum importance threshold of 0.3 allows more factual content to be captured
+  if (importance < 0.3) {
+    return { should: false, importance, suspicion };
+  }
 
   return { should: true, importance, suspicion };
 }

@@ -21,6 +21,7 @@ interface StatsData {
   recalls: number;
   errors: number;
   lastReset: number;
+  recentErrors: Array<{ timestamp: number; message: string; operation: string }>;
 }
 
 export class StatsTracker {
@@ -31,6 +32,8 @@ export class StatsTracker {
   private dirty = false;
   private flushInterval: ReturnType<typeof setInterval> | null = null;
   private readonly FLUSH_INTERVAL_MS = 30000; // 30 seconds
+  private readonly MAX_RECENT_ERRORS = 50; // v2.4.3: Keep last 50 errors with details
+  private recentErrors: Array<{ timestamp: number; message: string; operation: string }> = [];
 
   constructor() {
     this.load();
@@ -45,6 +48,7 @@ export class StatsTracker {
         this.recalls = data.recalls || 0;
         this.errors = data.errors || 0;
         this.lastReset = data.lastReset || Date.now();
+        this.recentErrors = (data.recentErrors || []).slice(0, this.MAX_RECENT_ERRORS);
       }
     } catch (error) {
       console.warn(`memory-claw: Failed to load stats: ${error}`);
@@ -62,6 +66,7 @@ export class StatsTracker {
         recalls: this.recalls,
         errors: this.errors,
         lastReset: this.lastReset,
+        recentErrors: this.recentErrors,
       };
       writeFileSync(STATS_PATH, JSON.stringify(data, null, 2));
     } catch (error) {
@@ -106,17 +111,28 @@ export class StatsTracker {
     this.dirty = true;
   }
 
-  error(): void {
+  error(operation: string, message: string): void {
     this.errors++;
     this.dirty = true;
+    // v2.4.3: Track error details for debugging
+    this.recentErrors.push({
+      timestamp: Date.now(),
+      operation,
+      message: message.slice(0, 200), // Limit message size
+    });
+    // Keep only the most recent errors
+    if (this.recentErrors.length > this.MAX_RECENT_ERRORS) {
+      this.recentErrors = this.recentErrors.slice(-this.MAX_RECENT_ERRORS);
+    }
   }
 
-  getStats(): { captures: number; recalls: number; errors: number; uptime: number } {
+  getStats(): { captures: number; recalls: number; errors: number; uptime: number; recentErrors: Array<{ timestamp: number; message: string; operation: string }> } {
     return {
       captures: this.captures,
       recalls: this.recalls,
       errors: this.errors,
       uptime: Math.floor((Date.now() - this.lastReset) / 1000),
+      recentErrors: [...this.recentErrors],
     };
   }
 
