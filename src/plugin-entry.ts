@@ -418,7 +418,9 @@ const plugin = {
     }
 
     const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
-    const vectorDim = embedding.dimensions || 256;
+    // Detect vector dimension from model (mistral-embed=1024, not 256)
+    const model = embedding.model || "mistral-embed";
+    const vectorDim = embedding.dimensions || (model.includes("mistral") ? 1024 : 768);
 
     const db = new MemoryDB(dbPath, vectorDim);
     const embeddings = new Embeddings(apiKey, embedding.model || "mistral-embed", embedding.baseUrl, embedding.dimensions);

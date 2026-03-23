@@ -89,7 +89,8 @@ export class Embeddings {
       input: normalizedText,
     };
 
-    if (this.dimensions) {
+    // Only send dimensions for models that support it (not mistral-embed)
+    if (this.dimensions && !this.model.includes("mistral-embed")) {
       params.dimensions = this.dimensions;
     }
 
