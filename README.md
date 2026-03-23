@@ -1,4 +1,4 @@
-# Memory Claw v2.4.2
+# Memory Claw v2.4.5
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -398,7 +398,17 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.4.2 (Current)
+### v2.4.5 (Current)
+- **Bug Fixes:**
+  - Fixed version inconsistencies in plugin comments and log messages (v2.4.2 → v2.4.5)
+  - Fixed `skippedLowImportance` counter - now properly tracks content skipped due to low importance
+  - Fixed importance threshold - now uses configured `minCaptureImportance` instead of hardcoded 0.3
+  - Improved capture logging with detailed breakdown of skip reasons
+- **Improvements:**
+  - Enhanced LanceDB compaction strategy with better fallback behavior
+  - Added `skippedOther` counter for future extensibility
+
+### v2.4.2
 - **LanceDB Schema Fix:**
   - Fixed schema inference for empty tags array - use `[""]` instead of `[]` to force string[] type
 

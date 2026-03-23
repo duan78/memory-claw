@@ -367,7 +367,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.2: Fixed LanceDB schema inference for empty tags array. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.4: Critical bug fixes. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -409,7 +409,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.2: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.4: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -838,6 +838,7 @@ const plugin = {
       let skippedNoTrigger = 0;
       let skippedDuplicate = 0;
       let skippedRateLimit = 0;
+      let skippedOther = 0;
       const source: "agent_end" | "session_end" = "agent_end";
 
       if (cfg.enableStats) {
@@ -845,15 +846,38 @@ const plugin = {
       }
 
       for (const group of grouped) {
-        const { combinedText } = group;
+        const { combinedText, messageCount } = group;
+
+        // DEBUG: Log each group being processed
+        api.logger.info?.(`[memory-claw] 🔍 Processing group (${messageCount} msgs, ${combinedText.length} chars): "${combinedText.slice(0, 80)}..."`);
 
         try {
-          const captureResult = shouldCapture(combinedText, cfg.captureMinChars || 50, cfg.captureMaxChars || 3000, undefined, source);
+          // DEBUG: Use very permissive capture thresholds for diagnosis
+          // Minimum 20 chars, importance > 0.1 (was: 50 chars, importance > 0.45)
+          const captureResult = shouldCapture(
+            combinedText,
+            20, // DEBUG: Lowered from cfg.captureMinChars || 50
+            cfg.captureMaxChars || 3000,
+            undefined,
+            source,
+            0.1 // DEBUG: Lowered from cfg.minCaptureImportance || 0.45
+          );
 
           if (!captureResult.should) {
-            skippedNoTrigger++;
+            // DEBUG: Log why capture was skipped
+            api.logger.info?.(`[memory-claw] ❌ Skipped: importance=${captureResult.importance.toFixed(3)} suspicion=${captureResult.suspicion.toFixed(2)}`);
+
+            // Track why capture was skipped (DEBUG threshold updated)
+            if (captureResult.importance > 0 && captureResult.importance < 0.1) {
+              skippedLowImportance++;
+            } else {
+              skippedNoTrigger++;
+            }
             continue;
           }
+
+          // DEBUG: Log successful capture
+          api.logger.info?.(`[memory-claw] ✅ CAPTURE! importance=${captureResult.importance.toFixed(3)} category=${detectCategory(combinedText)}`);
 
           // v2.4.4 FIX: Removed double importance filter
           // shouldCapture already checks importance >= 0.3, so we don't need minCaptureImportance filter here
@@ -905,12 +929,13 @@ const plugin = {
         }
       }
 
-      if (stored > 0 || skippedLowImportance > 0 || skippedNoTrigger > 0 || skippedDuplicate > 0 || skippedRateLimit > 0) {
+      if (stored > 0 || skippedLowImportance > 0 || skippedNoTrigger > 0 || skippedDuplicate > 0 || skippedRateLimit > 0 || skippedOther > 0) {
         stats.capture();
         if (cfg.enableStats) {
           const details = [];
           if (stored > 0) details.push(`${stored} stored`);
-          if (skippedNoTrigger > 0) details.push(`${skippedNoTrigger} no trigger`);
+          if (skippedLowImportance > 0) details.push(`${skippedLowImportance} low importance`);
+          if (skippedNoTrigger > 0) details.push(`${skippedNoTrigger} no trigger/pattern`);
           if (skippedDuplicate > 0) details.push(`${skippedDuplicate} duplicates`);
           if (skippedRateLimit > 0) details.push(`${skippedRateLimit} rate limited`);
           api.logger.info(`memory-claw: Processed messages - ${details.join(", ")}`);

@@ -618,30 +618,39 @@ export class MemoryDB {
   }
 
   /**
-   * v2.4.3: Compact LanceDB database to reduce transaction file bloat
-   * Call this periodically to clean up old transaction and version files.
+   * v2.4.5: Compact LanceDB database to reduce transaction file bloat
    *
    * LanceDB accumulates transaction files for every operation (insert, update, delete).
-   * Without compaction, these files can grow unbounded, causing the database directory
-   * to become very large even with few actual records.
+   * The JS SDK doesn't expose direct compaction methods, but we can use createNewVersion
+   * to trigger optimization of the underlying Lance format.
    *
    * Recommended: Call after batch operations or periodically (e.g., every 100 operations).
    */
   async compact(): Promise<void> {
     await this.ensure();
     try {
-      // LanceDB doesn't expose a direct compact() method in the JS API,
-      // but we can use the underlying optimize/compact functionality through the table
+      // LanceDB's Python SDK has optimize() and compact() methods, but the JS SDK
+      // doesn't expose these directly. As an alternative, we can check if the table
+      // has any optimization methods and call them.
+      const tableMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(this.table) || {});
+
       if (this.table && typeof (this.table as any).compact === "function") {
         await (this.table as any).compact();
         console.log("memory-claw: Database compacted successfully");
-      }
-      // Alternative: Create a new version and clean up old ones
-      if (this.table && typeof (this.table as any).optimize === "function") {
+      } else if (this.table && typeof (this.table as any).optimize === "function") {
         await (this.table as any).optimize();
         console.log("memory-claw: Database optimized successfully");
+      } else if (this.table && typeof (this.table as any).createNewVersion === "function") {
+        // createNewVersion can help trigger compaction of underlying data files
+        await (this.table as any).createNewVersion();
+        console.log("memory-claw: Database version updated (may help with compaction)");
+      } else {
+        // No direct compaction method available - this is non-critical
+        // The database will still function, just may have more transaction files
+        console.log("memory-claw: Compaction not available (non-critical, DB still functional)");
       }
     } catch (error) {
+      // Compaction is non-critical - log warning but don't fail
       console.warn(`memory-claw: Compaction failed (non-critical): ${error}`);
     }
   }
