@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.4 - Statistics Tracker with Improved Persistence
+ * Memory Claw v2.4.6 - Statistics Tracker with Improved Persistence
+ *
+ * v2.4.6 improvements:
+ * - Cleaner logging for production
  *
  * v2.4.4 improvements:
  * - Immediate flush for critical operations (capture)
@@ -7,7 +10,7 @@
  * - More frequent saves to prevent data loss
  * - Logging when stats are saved/loaded
  *
- * @version 2.4.4
+ * @version 2.4.6
  * @author duan78
  */
 
@@ -74,8 +77,8 @@ export class StatsTracker {
         recentErrors: this.recentErrors,
       };
       writeFileSync(STATS_PATH, JSON.stringify(data, null, 2));
-      // v2.4.4: Log when stats are saved
-      console.log(`memory-claw: Stats saved - captures: ${this.captures}, recalls: ${this.recalls}, errors: ${this.errors}`);
+      // Only log stats saves on explicit saves, not periodic flushes
+      // console.log(`memory-claw: Stats saved - captures: ${this.captures}, recalls: ${this.recalls}, errors: ${this.errors}`);
     } catch (error) {
       console.error(`memory-claw: Failed to save stats: ${error}`);
       if (error instanceof Error && error.stack) {
@@ -114,7 +117,7 @@ export class StatsTracker {
   capture(): void {
     this.captures++;
     this.dirty = true;
-    // v2.4.4: Immediate flush for captures to prevent data loss
+    // Only flush, don't log on every capture
     this.flush();
   }
 

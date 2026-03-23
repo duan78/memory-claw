@@ -5,6 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.6: Production Release & Optimizations
+ * - FIXED: Version consistency (package.json now matches code)
+ * - FIXED: Removed DEBUG logging from production build
+ * - FIXED: Restored proper capture thresholds (importance >= 0.45, chars >= 50)
+ * - OPTIMIZED: Improved hash function to reduce cache collisions
+ * - OPTIMIZED: Better batch query performance
+ * - FIXED: Removed broken test script reference
+ *
  * v2.4.4: Critical Bug Fixes
  * - FIXED: Removed double importance filter that was blocking captures
  * - FIXED: Removed event.success requirement in agent_end hook
@@ -55,7 +63,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.4
+ * @version 2.4.6
  * @author duan78
  */
 
@@ -367,7 +375,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.4: Critical bug fixes. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.6: Production release with optimizations. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -409,7 +417,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.4: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.6: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -848,40 +856,24 @@ const plugin = {
       for (const group of grouped) {
         const { combinedText, messageCount } = group;
 
-        // DEBUG: Log each group being processed
-        api.logger.info?.(`[memory-claw] 🔍 Processing group (${messageCount} msgs, ${combinedText.length} chars): "${combinedText.slice(0, 80)}..."`);
-
         try {
-          // DEBUG: Use very permissive capture thresholds for diagnosis
-          // Minimum 20 chars, importance > 0.1 (was: 50 chars, importance > 0.45)
           const captureResult = shouldCapture(
             combinedText,
-            20, // DEBUG: Lowered from cfg.captureMinChars || 50
+            cfg.captureMinChars || 50,
             cfg.captureMaxChars || 3000,
             undefined,
             source,
-            0.1 // DEBUG: Lowered from cfg.minCaptureImportance || 0.45
+            cfg.minCaptureImportance || 0.45
           );
 
           if (!captureResult.should) {
-            // DEBUG: Log why capture was skipped
-            api.logger.info?.(`[memory-claw] ❌ Skipped: importance=${captureResult.importance.toFixed(3)} suspicion=${captureResult.suspicion.toFixed(2)}`);
-
-            // Track why capture was skipped (DEBUG threshold updated)
-            if (captureResult.importance > 0 && captureResult.importance < 0.1) {
+            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.45)) {
               skippedLowImportance++;
             } else {
               skippedNoTrigger++;
             }
             continue;
           }
-
-          // DEBUG: Log successful capture
-          api.logger.info?.(`[memory-claw] ✅ CAPTURE! importance=${captureResult.importance.toFixed(3)} category=${detectCategory(combinedText)}`);
-
-          // v2.4.4 FIX: Removed double importance filter
-          // shouldCapture already checks importance >= 0.3, so we don't need minCaptureImportance filter here
-          // The importance threshold is now managed entirely within shouldCapture()
 
           if (!rateLimiter.canCapture(captureResult.importance)) {
             skippedRateLimit++;

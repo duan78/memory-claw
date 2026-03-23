@@ -1,9 +1,10 @@
 /**
- * Memory Claw v2.4.3 - Capture Utilities
+ * Memory Claw v2.4.6 - Capture Utilities
  *
+ * v2.4.6: Production release - removed DEBUG logging, restored proper thresholds
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.3
+ * @version 2.4.6
  * @author duan78
  */
 
@@ -319,15 +320,8 @@ export function detectCategory(text: string): string {
 }
 
 /**
- * DEBUG VERSION v2.4.5-dbg - Temporary permissive capture for diagnosis
- *
- * This version includes extensive logging and VERY permissive capture rules
- * to diagnose why only 2 captures occurred out of hundreds of messages.
- *
- * LOGGING: Every filter decision is logged with the rejection reason
- * CAPTURE: If text > 20 chars and importance > 0.1, capture EVERYTHING
- *
- * TODO: After diagnosis, restore proper filtering with tuned thresholds
+ * Production capture function with proper filtering thresholds.
+ * v2.4.6: Restored production thresholds after DEBUG phase.
  */
 export function shouldCapture(
   text: string,
@@ -335,73 +329,48 @@ export function shouldCapture(
   maxChars: number,
   category?: string,
   source: MemorySource = "auto-capture",
-  minImportance: number = 0.1 // DEBUG: Lowered from 0.45 to 0.1
+  minImportance: number = 0.45
 ): { should: boolean; importance: number; suspicion: number } {
-  // DEBUG: Log input for first pass
-  const debugLog = (msg: string, data?: any) => {
-    console.log(`[memory-claw-DEBUG] ${msg}`, data || '');
-  };
-
   if (!text || typeof text !== "string") {
-    debugLog("❌ REJECT: Invalid text", { text, type: typeof text });
     return { should: false, importance: 0.5, suspicion: 0 };
   }
 
   const normalized = normalizeText(text);
-  debugLog(`📝 Text length: ${normalized.length} chars (min: ${minChars}, max: ${maxChars})`);
 
-  // DEBUG: Temporarily lower minimum length to 20 chars
-  const debugMinChars = 20;
-
-  if (!normalized || normalized.length < debugMinChars || normalized.length > maxChars) {
-    debugLog(`❌ REJECT: Length check failed`, { length: normalized?.length, min: debugMinChars, max: maxChars });
+  // Length check
+  if (!normalized || normalized.length < minChars || normalized.length > maxChars) {
     return { should: false, importance: 0.5, suspicion: 0 };
   }
-  debugLog("✓ PASS: Length check");
 
-  // Check for prompt injection
+  // Injection check
   const suspicion = calculateInjectionSuspicion(normalized);
   if (suspicion > 0.5) {
-    debugLog(`❌ REJECT: High injection suspicion`, { suspicion });
     return { should: false, importance: 0.5, suspicion };
   }
-  debugLog(`✓ PASS: Injection check (suspicion: ${suspicion.toFixed(2)})`);
 
-  // DEBUG: Temporarily DISABLE skip patterns to see what they block
-  // if (getAllSkipPatterns().some((p) => p.test(normalized))) {
-  //   debugLog(`❌ REJECT: Skip pattern matched`);
-  //   return { should: false, importance: 0.5, suspicion };
-  // }
-  debugLog("✓ PASS: Skip patterns (DISABLED for DEBUG)");
+  // Skip patterns check
+  if (getAllSkipPatterns().some((p) => p.test(normalized))) {
+    return { should: false, importance: 0.5, suspicion };
+  }
 
-  // DEBUG: Temporarily DISABLE low value patterns
-  // if (getAllLowValuePatterns().some((p) => p.test(normalized))) {
-  //   debugLog(`❌ REJECT: Low value pattern matched`);
-  //   return { should: false, importance: 0.5, suspicion };
-  // }
-  debugLog("✓ PASS: Low value patterns (DISABLED for DEBUG)");
+  // Low value patterns check
+  if (getAllLowValuePatterns().some((p) => p.test(normalized))) {
+    return { should: false, importance: 0.5, suspicion };
+  }
 
-  // Calculate dynamic importance first
+  // Calculate importance
   const detectedCategory = category || detectCategory(normalized);
   let importance = calculateImportance(normalized, detectedCategory, source);
-  debugLog(`📊 Calculated importance: ${importance.toFixed(3)} (category: ${detectedCategory}, source: ${source})`);
 
-  // Check for trigger patterns
-  const hasTrigger = getAllTriggers().some((r) => r.test(normalized));
-  if (hasTrigger) {
+  // Trigger patterns boost importance
+  if (getAllTriggers().some((r) => r.test(normalized))) {
     importance = Math.min(1.0, importance + 0.15);
-    debugLog(`🎯 TRIGGER FOUND! Boosted importance to ${importance.toFixed(3)}`);
-  } else {
-    debugLog(`ℹ️  No trigger pattern matched`);
   }
 
-  // DEBUG: Use much lower importance threshold (0.1 instead of 0.45)
+  // Importance threshold check
   if (importance < minImportance) {
-    debugLog(`❌ REJECT: Importance too low`, { importance, minThreshold: minImportance });
     return { should: false, importance, suspicion };
   }
-  debugLog(`✓ PASS: Importance check (${importance.toFixed(3)} >= ${minImportance})`);
 
-  debugLog(`✅✅✅ CAPTURE APPROVED!`, { importance, category: detectedCategory, hasTrigger });
   return { should: true, importance, suspicion };
 }

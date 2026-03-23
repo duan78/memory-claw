@@ -1,12 +1,16 @@
 /**
- * Memory Claw v2.4.0 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.6 - Embeddings Client with LRU Cache
+ *
+ * v2.4.6 improvements:
+ * - Improved hash function to reduce collision risk
+ * - Better cache key generation with FNV-1a algorithm
  *
  * v2.4.0 improvements:
  * - LRU cache with TTL (1 hour) to avoid redundant API calls
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.0
+ * @version 2.4.6
  * @author duan78
  */
 
@@ -35,16 +39,18 @@ export class Embeddings {
   }
 
   /**
-   * Simple hash function for text to use as cache key
+   * FNV-1a hash function for better cache key distribution
+   * Reduces collision risk compared to simple hash
    */
   private hashText(text: string): string {
-    let hash = 0;
+    // FNV-1a 32-bit hash algorithm
+    let hash = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
-      const char = text.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
     }
-    return `${this.model}:${hash.toString(16)}`;
+    // Combine with model name for cache key
+    return `${this.model}:${(hash >>> 0).toString(16)}`;
   }
 
   /**

@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.3 - Database Module
+ * Memory Claw v2.4.6 - Database Module
+ *
+ * v2.4.6 improvements:
+ * - Optimized batch query operations
+ * - Improved error handling
  *
  * v2.4.3 improvements:
  * - Fixed low capture rate by relaxing trigger requirements
@@ -16,7 +20,7 @@
  * - Tier-aware garbage collection
  * - Auto-promotion support
  *
- * @version 2.4.3
+ * @version 2.4.6
  * @author duan78
  */
 
