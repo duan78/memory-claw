@@ -1,5 +1,7 @@
 /**
- * Memory Claw v2.4.15 - Capture Utilities
+ * Memory Claw v2.4.17 - Capture Utilities
+ *
+ * v2.4.17: Lowered minImportance default from 0.30 to 0.25 for better factual content capture
  *
  * v2.4.15: Enhanced content filtering
  * - Added JSON metadata block detection and filtering
@@ -17,7 +19,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.15
+ * @version 2.4.17
  * @author duan78
  */
 
@@ -392,7 +394,7 @@ export function shouldCapture(
   maxChars: number,
   category?: string,
   source: MemorySource = "auto-capture",
-  minImportance: number = 0.30  // v2.4.12: Lowered from 0.45 to 0.30
+  minImportance: number = 0.25  // v2.4.17: Lowered from 0.30 to 0.25 for better factual content capture
 ): { should: boolean; importance: number; suspicion: number } {
   if (!text || typeof text !== "string") {
     return { should: false, importance: 0.5, suspicion: 0 };

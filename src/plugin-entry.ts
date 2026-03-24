@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.17: SENDER METADATA CLEANUP & IMPORTANCE THRESHOLD FIX
+ * - FIXED: Added cleanSenderMetadata() function to remove "Sender (untrusted metadata)" prefixes
+ * - FIXED: Enhanced groupConsecutiveUserMessages to call cleanSenderMetadata on all extracted text
+ * - FIXED: Lowered minCaptureImportance from 0.30 to 0.25 (config default 0.45→0.25)
+ * - FIXED: Better capture rate for factual content without spam triggers
+ * - FIXED: Updated all threshold references consistently across codebase
+ *
  * v2.4.16: Z.AI ENDPOINT FIX
  * - FIXED: Auto-correct Z.AI baseUrl to Mistral official API (api.z.ai/v1/embeddings = 404)
  * - Z.AI API keys now automatically use https://api.mistral.ai/v1 endpoint
@@ -105,7 +112,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.16
+ * @version 2.4.17
  * @author duan78
  */
 
@@ -331,6 +338,28 @@ function filterJsonMetadata(text: string): string {
   return filteredLines.join("\n").trim();
 }
 
+/**
+ * v2.4.17: Enhanced sender metadata cleaning
+ * Removes "Sender (untrusted metadata)" prefixes and other noise from content
+ */
+function cleanSenderMetadata(text: string): string {
+  if (!text || typeof text !== "string") return text;
+
+  // Remove sender metadata prefixes at the start of text
+  const patterns = [
+    /^Sender\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+    /^Conversation\s*info\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+    /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
+  ];
+
+  let cleaned = text;
+  for (const pattern of patterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  return cleaned.trim();
+}
+
 function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
   const groups: GroupedMessage[] = [];
   let currentGroup: string[] = [];
@@ -390,8 +419,12 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
 
     if (!text || typeof text !== "string") continue;
 
-    // v2.4.15: Filter out JSON metadata from extracted text
+    // v2.4.17: Filter out JSON metadata from extracted text
     text = filterJsonMetadata(text);
+
+    // v2.4.17: Clean sender metadata (CRITICAL FIX)
+    text = cleanSenderMetadata(text);
+
     const trimmed = text.trim();
     if (!trimmed) continue;
 
@@ -962,14 +995,14 @@ const plugin = {
             cfg.captureMaxChars || 3000,
             undefined,
             source,
-            cfg.minCaptureImportance || 0.30  // v2.4.12: Lowered from 0.45 to 0.30 for better capture rate
+            cfg.minCaptureImportance || 0.25  // v2.4.17: Lowered from 0.30 to 0.25 for better capture rate
           );
 
           // v2.4.15: DEBUG - Log why messages are being filtered
           if (cfg.enableStats) {
             const preview = combinedText.slice(0, 80).replace(/\n/g, " ");
             if (!captureResult.should) {
-              const reason = captureResult.importance < (cfg.minCaptureImportance || 0.30)
+              const reason = captureResult.importance < (cfg.minCaptureImportance || 0.25)
                 ? `low importance (${captureResult.importance.toFixed(2)})`
                 : `filtered (importance: ${captureResult.importance.toFixed(2)})`;
               api.logger.info(`memory-claw: SKIPPED [${reason}]: "${preview}..."`);
@@ -979,7 +1012,7 @@ const plugin = {
           }
 
           if (!captureResult.should) {
-            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.30)) {  // v2.4.12: Lowered from 0.45 to 0.30
+            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.25)) {  // v2.4.17: Lowered from 0.30 to 0.25
               skippedLowImportance++;
             } else {
               skippedNoTrigger++;

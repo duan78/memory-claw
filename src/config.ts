@@ -37,7 +37,7 @@ export const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   maxCapturePerTurn: 5,
   captureMinChars: 50,
   captureMaxChars: 3000,
-  minCaptureImportance: 0.45,
+  minCaptureImportance: 0.25, // v2.4.17: Lowered from 0.45 to 0.25 for better factual content capture
   recallLimit: 5,
   recallMinScore: 0.3,
   enableStats: true,

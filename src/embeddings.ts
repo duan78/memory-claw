@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.16 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.17 - Embeddings Client with LRU Cache
+ *
+ * v2.4.17 improvements:
+ * - Sender metadata cleanup support for fix-embeddings script
  *
  * v2.4.16 improvements:
  * - CRITICAL FIX: Z.AI endpoint auto-correction - api.z.ai/v1/embeddings returns 404
@@ -26,7 +29,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.16
+ * @version 2.4.17
  * @author duan78
  */
 
