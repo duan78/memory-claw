@@ -1,5 +1,10 @@
 /**
- * Memory Claw v2.4.19 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.21 - Embeddings Client with LRU Cache
+ *
+ * v2.4.21 improvements:
+ * - Fixed mclaw_store to embed cleaned text instead of original (critical bug)
+ * - Enhanced metadata cleaning patterns with more system artifacts
+ * - Improved vector detection for LanceDB FixedSizeList format
  *
  * v2.4.19 improvements:
  * - Fixed metadata cleaning across all storage paths
@@ -32,7 +37,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.19
+ * @version 2.4.21
  * @author duan78
  */
 

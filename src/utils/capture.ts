@@ -1,5 +1,11 @@
 /**
- * Memory Claw v2.4.19 - Capture Utilities
+ * Memory Claw v2.4.21 - Capture Utilities
+ *
+ * v2.4.21: Enhanced metadata cleaning and capture quality
+ * - Added more system artifact patterns to metadata cleaning
+ * - Improved JSON metadata detection with edge cases
+ * - Better handling of instruction tags and prompts
+ * - Enhanced vector detection for LanceDB FixedSizeList format
  *
  * v2.4.19: Fixed metadata cleaning across all storage paths
  * - Manual storage (mclaw_store) now cleans metadata
@@ -24,7 +30,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.19
+ * @version 2.4.21
  * @author duan78
  */
 

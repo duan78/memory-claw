@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.21: CRITICAL EMBEDDING BUG FIX + CAPTURE QUALITY IMPROVEMENTS
+ * - FIXED: mclaw_store now embeds cleaned text instead of original (was causing search/index mismatch)
+ * - FIXED: All duplicate checks now use cleaned text for consistency
+ * - IMPROVED: Enhanced metadata cleaning with more patterns for system artifacts
+ * - IMPROVED: Better JSON metadata detection with edge case handling
+ * - IMPROVED: Enhanced fix-embeddings script with vector detection improvements
+ *
  * v2.4.19: METADATA CLEANING BUG FIXES
  * - FIXED: Manual storage (mclaw_store) now cleans metadata before storing
  * - FIXED: Import function (mclaw_import) now cleans metadata from imported memories
@@ -126,7 +133,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.19
+ * @version 2.4.21
  * @author duan78
  */
 
@@ -355,23 +362,32 @@ function filterJsonMetadata(text: string): string {
 }
 
 /**
- * v2.4.17: Enhanced sender metadata cleaning
+ * v2.4.21: Enhanced sender metadata cleaning
  * Removes "Sender (untrusted metadata)" prefixes and other noise from content
  *
- * v2.4.18 improvements:
+ * v2.4.21 improvements:
  * - Added more comprehensive timestamp patterns
  * - Added system message prefix patterns
  * - Added tool call artifact patterns
  * - Improved metadata header detection
+ * - Added JSON metadata pattern removal
+ * - Added instruction tag filtering
+ * - FIXED: Better handling of JSON metadata blocks with ```json wrapper (regardless of position)
  */
 function cleanSenderMetadata(text: string): string {
   if (!text || typeof text !== "string") return text;
 
   // Remove sender metadata prefixes at the start of text
   const patterns = [
-    // Original patterns
-    /^Sender\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
-    /^Conversation\s*info\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+    // v2.4.21: FIXED patterns to match entire metadata blocks regardless of position
+    // These patterns match the full metadata blocks with ```json wrapper
+    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```json[^`]*```/gi,
+
+    // Also match without json identifier
+    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```/gi,
+
+    // v2.4.21: More aggressive patterns to catch JSON metadata blocks
+    /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
 
     // Enhanced timestamp patterns - catch more variations
     /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
@@ -405,6 +421,21 @@ function cleanSenderMetadata(text: string): string {
 
     // Empty metadata objects
     /^\{\s*\}\s*/g,
+
+    // v2.4.21: Additional patterns for system artifacts
+    /^\[INST\]/gi,
+    /^\[\/INST\]/gi,
+    /^\[SYSTEM\]/gi,
+    /^<\|.*?\|>/g,
+    /<instruction[^>]*>/gi,
+    /<system[^>]*>/gi,
+    /<prompt[^>]*>/gi,
+
+    // v2.4.21: JSON metadata patterns
+    /^\s*\{\s*"role"\s*:\s*"tool"/gi,
+    /^\s*\{\s*"role"\s*:\s*"system"/gi,
+    /^\s*\{\s*"tool_call_id"/gi,
+    /^\s*\{\s*"function"/gi,
   ];
 
   let cleaned = text;
@@ -550,7 +581,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.19: Fixed metadata cleaning across all storage paths. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.21: Fixed embedding bug + improved capture quality + enhanced metadata cleaning. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -604,7 +635,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.16: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.21: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -637,18 +668,20 @@ const plugin = {
         async execute(_toolCallId, params) {
           try {
             const { text, importance, category } = params as { text: string; importance?: number; category?: string };
-            // v2.4.19: Clean metadata from text before storing (manual storage path was missing this)
+            // v2.4.21: Clean metadata from text before storing (manual storage path was missing this)
             const cleanedText = cleanSenderMetadata(text);
             const normalizedText = normalizeText(cleanedText);
-            const detectedCategory = category || detectCategory(text);
+            const detectedCategory = category || detectCategory(normalizedText);
             const finalImportance = importance ?? calculateImportance(normalizedText, detectedCategory, "manual");
 
-            const vector = await embeddings.embed(text);
+            // v2.4.21: CRITICAL FIX - Embed the cleaned text, not the original
+            // Previous version embedded original text causing search/index mismatch
+            const vector = await embeddings.embed(normalizedText);
             const vectorMatches = await db.search(vector, 3, 0.90, false);
 
             let isDuplicate = false;
             for (const match of vectorMatches) {
-              if (calculateTextSimilarity(text, match.text) > 0.85) {
+              if (calculateTextSimilarity(normalizedText, match.text) > 0.85) {
                 isDuplicate = true;
                 break;
               }
@@ -674,7 +707,7 @@ const plugin = {
             return {
               content: [{
                 type: "text" as const,
-                text: `Stored: "${text.slice(0, 100)}" (id: ${entry.id}, category: ${detectedCategory}, importance: ${finalImportance.toFixed(2)}, tier: ${determinedTier})`
+                text: `Stored: "${normalizedText.slice(0, 100)}" (id: ${entry.id}, category: ${detectedCategory}, importance: ${finalImportance.toFixed(2)}, tier: ${determinedTier})`
               }]
             };
           } catch (error) {

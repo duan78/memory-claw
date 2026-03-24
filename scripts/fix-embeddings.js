@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * Memory Claw v2.4.20 - Fix/Regenerate Embeddings
+ * Memory Claw v2.4.21 - Fix/Regenerate Embeddings
+ *
+ * v2.4.21 improvements:
+ * - FIXED: Enhanced metadata cleaning with more comprehensive patterns
+ * - FIXED: Improved vector detection for LanceDB FixedSizeList format
+ * - FIXED: Better handling of edge cases in text cleaning
+ * - IMPROVED: More robust empty/null vector detection
  *
  * v2.4.20 improvements:
  * - FIXED: Config path now looks in openclaw.json instead of config.json
@@ -49,16 +55,27 @@ if (!API_KEY) {
 }
 
 /**
- * Enhanced metadata cleaning with more comprehensive patterns
+ * v2.4.21: Enhanced metadata cleaning with more comprehensive patterns
+ * - Added more timestamp format variations
+ * - Added system/tool call patterns
+ * - Added header removal patterns
+ * - Improved handling of edge cases
+ * - FIXED: Better handling of JSON metadata blocks with ```json wrapper (regardless of position)
  */
 function cleanSenderMetadata(text) {
   if (!text || typeof text !== "string") return text;
 
   // Remove sender metadata prefixes at the start of text
   const patterns = [
-    // Original patterns
-    /^Sender\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
-    /^Conversation\s*info\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+    // v2.4.21: FIXED patterns to match entire metadata blocks regardless of position
+    // These patterns match the full metadata blocks with ```json wrapper
+    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```json[^`]*```/gi,
+
+    // Also match without json identifier
+    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```/gi,
+
+    // v2.4.21: More aggressive patterns to catch JSON metadata blocks
+    /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
 
     // Enhanced timestamp patterns - catch more variations
     /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
@@ -92,6 +109,21 @@ function cleanSenderMetadata(text) {
 
     // Empty metadata objects
     /^\{\s*\}\s*/g,
+
+    // v2.4.21: Additional patterns for system artifacts
+    /^\[INST\]/gi,
+    /^\[\/INST\]/gi,
+    /^\[SYSTEM\]/gi,
+    /^<\|.*?\|>/g,
+    /<instruction[^>]*>/gi,
+    /<system[^>]*>/gi,
+    /<prompt[^>]*>/gi,
+
+    // v2.4.21: JSON metadata patterns
+    /^\s*\{\s*"role"\s*:\s*"tool"/gi,
+    /^\s*\{\s*"role"\s*:\s*"system"/gi,
+    /^\s*\{\s*"tool_call_id"/gi,
+    /^\s*\{\s*"function"/gi,
   ];
 
   let cleaned = text;
@@ -100,6 +132,36 @@ function cleanSenderMetadata(text) {
   }
 
   return cleaned.trim();
+}
+
+/**
+ * v2.4.21: Enhanced vector detection for LanceDB FixedSizeList format
+ * - Handles both array and object vectors
+ * - Checks for null/undefined vectors
+ * - Validates vector length
+ */
+function hasValidVector(vector) {
+  if (!vector) return false;
+
+  // Handle array vectors
+  if (Array.isArray(vector)) {
+    return vector.length > 0;
+  }
+
+  // Handle object vectors (LanceDB FixedSizeList)
+  if (typeof vector === 'object') {
+    // Check if it has a length property
+    if (typeof vector.length === 'number' && vector.length > 0) {
+      return true;
+    }
+
+    // Check if it's a Float32Array or similar typed array
+    if (vector.buffer && vector.byteLength > 0) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -147,7 +209,7 @@ async function generateEmbedding(text, retries = 3) {
 async function fixEmbeddings() {
   const startTime = Date.now();
   console.log("=".repeat(60));
-  console.log("Memory Claw v2.4.18 - Embedding Fix/Regeneration Script");
+  console.log("Memory Claw v2.4.21 - Embedding Fix/Regeneration Script");
   console.log("=".repeat(60));
   console.log(`Mode: ${FORCE_REGENERATE_ALL ? "FORCE REGENERATE ALL" : "Fix only broken/unclean rows"}`);
   console.log(`Dry run: ${DRY_RUN ? "YES (no changes will be made)" : "NO"}`);
@@ -169,8 +231,8 @@ async function fixEmbeddings() {
 
   for (let i = 0; i < results.length; i++) {
     const row = results[i];
-    // LanceDB vectors are objects, not plain arrays - check for length instead
-    const hasValidVector = row.vector && typeof row.vector.length === 'number' && row.vector.length > 0;
+    // v2.4.21: Use enhanced vector detection
+    const hasValidVectorVal = hasValidVector(row.vector);
     const originalText = row.text || "";
 
     // Check if text needs cleaning
@@ -178,7 +240,7 @@ async function fixEmbeddings() {
     const needsCleaning = cleanedText !== originalText;
 
     // Determine if row needs processing
-    const needsProcessing = FORCE_REGENERATE_ALL || !hasValidVector || needsCleaning;
+    const needsProcessing = FORCE_REGENERATE_ALL || !hasValidVectorVal || needsCleaning;
 
     if (needsProcessing) {
       totalProcessed++;
@@ -186,7 +248,7 @@ async function fixEmbeddings() {
 
       try {
         console.log(`${progress} Processing row ${row.id.slice(0, 8)}...`);
-        console.log(`    Has vector: ${hasValidVector ? "Yes" : "No"}`);
+        console.log(`    Has vector: ${hasValidVectorVal ? "Yes" : "No"}`);
         console.log(`    Needs cleaning: ${needsCleaning ? "Yes" : "No"}`);
         console.log(`    Original text: "${originalText.slice(0, 60)}..."`);
 
