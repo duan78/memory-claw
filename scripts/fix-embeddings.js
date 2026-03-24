@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /**
- * Memory Claw v2.4.25 - Fix/Regenerate Embeddings
+ * Memory Claw v2.4.26 - Fix/Regenerate Embeddings
+ *
+ * v2.4.26 improvements:
+ * - FIXED: Auto-capture storage now uses cleaned text (was using unnormalized combinedText)
+ * - FIXED: Synchronized all text storage paths to use cleanSenderMetadata + normalizeText
+ * - FIXED: Ensured embeddings and stored text always use consistently cleaned input
+ * - IMPROVED: Better capture quality with explicit metadata cleaning
  *
  * v2.4.25 improvements:
  * - FIXED: Synchronized metadata cleaning patterns with text.ts v2.4.24
@@ -231,7 +237,7 @@ async function generateEmbedding(text, retries = 3) {
 async function fixEmbeddings() {
   const startTime = Date.now();
   console.log("=".repeat(60));
-  console.log("Memory Claw v2.4.25 - Embedding Fix/Regeneration Script");
+  console.log("Memory Claw v2.4.26 - Embedding Fix/Regeneration Script");
   console.log("=".repeat(60));
   console.log(`Mode: ${FORCE_REGENERATE_ALL ? "FORCE REGENERATE ALL" : "Fix only broken/unclean rows"}`);
   console.log(`Dry run: ${DRY_RUN ? "YES (no changes will be made)" : "NO"}`);

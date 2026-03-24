@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.26: AUTO-CAPTURE CLEAN TEXT FIX + IMPROVED CAPTURE QUALITY
+ * - FIXED: Auto-capture storage now uses cleaned text (was using unnormalized combinedText)
+ * - FIXED: Synchronized all text storage paths to use cleanSenderMetadata + normalizeText
+ * - FIXED: Ensured embeddings and stored text always use consistently cleaned input
+ * - IMPROVED: Better capture quality with explicit metadata cleaning in all storage paths
+ * - REGENERATED: All embeddings regenerated with force option for cleanliness
+ *
  * v2.4.25: SYNCHRONIZED METADATA CLEANING + ENHANCED CAPTURE QUALITY
  * - FIXED: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns
  * - FIXED: Updated fix-embeddings.js to version 2.4.25 for consistency
@@ -527,7 +534,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.25: Synchronized metadata cleaning + enhanced capture quality. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.26: Auto-capture clean text fix + improved capture quality. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -581,7 +588,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.25: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.26: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1109,8 +1116,9 @@ const plugin = {
           console.log("[memory-claw DEBUG] Tier determined:", determinedTier);
 
           console.log("[memory-claw DEBUG] Calling db.store...");
+          // v2.4.25: Store the cleaned text (same as used for embedding)
           await db.store({
-            text: normalizeText(combinedText),
+            text: normalizeText(textForEmbedding),
             vector,
             importance: captureResult.importance,
             category,
