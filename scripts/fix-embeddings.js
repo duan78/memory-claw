@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 /**
- * Memory Claw - Fix Existing Embeddings
+ * Memory Claw v2.4.18 - Fix/Regenerate Embeddings
  *
  * This script:
- * 1. Regenerates embeddings for all rows that have missing/invalid vectors
+ * 1. Regenerates embeddings for ALL rows or only broken rows (with --force flag)
  * 2. Cleans content by removing "Sender (untrusted metadata)" prefixes
  * 3. Verifies the embeddings API is working correctly
+ * 4. Provides detailed progress indicators and error handling
+ *
+ * Usage:
+ *   node scripts/fix-embeddings.js           # Fix only broken/unclean rows
+ *   node scripts/fix-embeddings.js --force    # Regenerate ALL embeddings
+ *   node scripts/fix-embeddings.js --dry-run  # Show what would be done
  */
 
 import { connect } from "@lancedb/lancedb";
@@ -13,6 +19,11 @@ import { readFileSync } from "node:fs";
 
 const DB_PATH = "/root/.openclaw/memory/memory-claw";
 const TABLE_NAME = "memories_claw";
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const FORCE_REGENERATE_ALL = args.includes("--force");
+const DRY_RUN = args.includes("--dry-run");
 
 // Load API key from environment or config
 let API_KEY = process.env.MISTRAL_API_KEY;
@@ -32,16 +43,49 @@ if (!API_KEY) {
 }
 
 /**
- * Clean sender metadata from text content
+ * Enhanced metadata cleaning with more comprehensive patterns
  */
 function cleanSenderMetadata(text) {
   if (!text || typeof text !== "string") return text;
 
-  // Remove common metadata prefixes
+  // Remove sender metadata prefixes at the start of text
   const patterns = [
+    // Original patterns
     /^Sender\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
     /^Conversation\s*info\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+
+    // Enhanced timestamp patterns - catch more variations
     /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
+    /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g, // [2026-03-23 15:52:30]
+    /^\[\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}\s+\w+\]\s*/g, // [03/23/2026 15:52 GMT]
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+\s*/g, // 2026-03-23 15:52:30 GMT
+
+    // System message prefixes
+    /^System\s*:\s*/gi,
+    /^Assistant\s*:\s*/gi,
+    /^User\s*:\s*/gi,
+    /^Tool\s*:\s*/gi,
+    /^Function\s*:\s*/gi,
+
+    // Tool call artifacts
+    /^Tool\s+Call\s*:\s*/gi,
+    /^Function\s+Call\s*:\s*/gi,
+    /^Result\s*:\s*/gi,
+    /^Error\s*:\s*/gi,
+
+    // Additional metadata headers
+    /^From\s*:\s*.+$/m, // From: someone
+    /^To\s*:\s*.+$/m, // To: someone
+    /^Subject\s*:\s*.+$/m, // Subject: something
+    /^Date\s*:\s*.+$/m, // Date: something
+    /^Message-ID\s*:\s*.+$/m, // Message-ID: xxx
+
+    // Sender/recipient patterns
+    /^Sender\s*:\s*\{\s*\}/gim,
+    /^From\s*\(untrusted\)/gim,
+
+    // Empty metadata objects
+    /^\{\s*\}\s*/g,
   ];
 
   let cleaned = text;
@@ -53,48 +97,72 @@ function cleanSenderMetadata(text) {
 }
 
 /**
- * Generate embedding using Mistral API
+ * Generate embedding using Mistral API with retry logic
  */
-async function generateEmbedding(text) {
-  const response = await fetch("https://api.mistral.ai/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "mistral-embed",
-      input: text,
-    }),
-  });
+async function generateEmbedding(text, retries = 3) {
+  let lastError;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch("https://api.mistral.ai/v1/embeddings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-embed",
+          input: text,
+        }),
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Embedding API error: ${response.status} ${response.statusText} - ${errorText}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Embedding API error: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      return data.data[0].embedding;
+    } catch (error) {
+      lastError = error;
+      if (i < retries - 1) {
+        // Exponential backoff: 200ms, 400ms, 800ms
+        const waitTime = 200 * Math.pow(2, i);
+        console.warn(`    Retry ${i + 1}/${retries} after ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
   }
-
-  const data = await response.json();
-  return data.data[0].embedding;
+  throw lastError;
 }
 
 /**
- * Main fix function
+ * Main fix function with enhanced error handling and progress tracking
  */
 async function fixEmbeddings() {
-  console.log("Connecting to database at:", DB_PATH);
+  const startTime = Date.now();
+  console.log("=".repeat(60));
+  console.log("Memory Claw v2.4.18 - Embedding Fix/Regeneration Script");
+  console.log("=".repeat(60));
+  console.log(`Mode: ${FORCE_REGENERATE_ALL ? "FORCE REGENERATE ALL" : "Fix only broken/unclean rows"}`);
+  console.log(`Dry run: ${DRY_RUN ? "YES (no changes will be made)" : "NO"}`);
+  console.log("=".repeat(60));
+
+  console.log("\nConnecting to database at:", DB_PATH);
   const db = await connect(DB_PATH);
   const table = await db.openTable(TABLE_NAME);
 
   // Get all rows
   console.log("Fetching all rows...");
-  const results = await table.query().limit(1000).toArray();
-  console.log(`Found ${results.length} rows`);
+  const results = await table.query().limit(10000).toArray();
+  console.log(`Found ${results.length} rows\n`);
 
   let fixed = 0;
   let skipped = 0;
   let errors = 0;
+  let totalProcessed = 0;
 
-  for (const row of results) {
+  for (let i = 0; i < results.length; i++) {
+    const row = results[i];
     const hasValidVector = row.vector && Array.isArray(row.vector) && row.vector.length > 0;
     const originalText = row.text || "";
 
@@ -102,58 +170,89 @@ async function fixEmbeddings() {
     const cleanedText = cleanSenderMetadata(originalText);
     const needsCleaning = cleanedText !== originalText;
 
-    if (!hasValidVector || needsCleaning) {
+    // Determine if row needs processing
+    const needsProcessing = FORCE_REGENERATE_ALL || !hasValidVector || needsCleaning;
+
+    if (needsProcessing) {
+      totalProcessed++;
+      const progress = `[${i + 1}/${results.length}]`;
+
       try {
-        console.log(`\nProcessing row ${row.id.slice(0, 8)}...`);
-        console.log(`  Has vector: ${hasValidVector}`);
-        console.log(`  Needs cleaning: ${needsCleaning}`);
-        console.log(`  Original text: "${originalText.slice(0, 80)}..."`);
+        console.log(`${progress} Processing row ${row.id.slice(0, 8)}...`);
+        console.log(`    Has vector: ${hasValidVector ? "Yes" : "No"}`);
+        console.log(`    Needs cleaning: ${needsCleaning ? "Yes" : "No"}`);
+        console.log(`    Original text: "${originalText.slice(0, 60)}..."`);
 
         // Generate new embedding for cleaned text
         const textToEmbed = needsCleaning ? cleanedText : originalText;
-        console.log(`  Text to embed: "${textToEmbed.slice(0, 80)}..."`);
+        console.log(`    Text to embed: "${textToEmbed.slice(0, 60)}..."`);
 
-        const vector = await generateEmbedding(textToEmbed);
-        console.log(`  Generated vector: ${vector.length}D`);
+        if (!DRY_RUN) {
+          const vector = await generateEmbedding(textToEmbed);
+          console.log(`    Generated vector: ${vector.length}D`);
 
-        // Delete old row and insert new one
-        await table.delete(`id = '${row.id}'`);
+          // Delete old row and insert new one
+          await table.delete(`id = '${row.id}'`);
 
-        const newEntry = {
-          id: row.id,
-          text: textToEmbed,
-          vector: vector,
-          importance: row.importance || 0.5,
-          category: row.category || "fact",
-          tier: row.tier || "episodic",
-          tags: row.tags || [],
-          createdAt: row.createdAt || Date.now(),
-          updatedAt: Date.now(),
-          lastAccessed: row.lastAccessed || Date.now(),
-          source: row.source || "agent_end",
-          hitCount: row.hitCount || 0,
-        };
+          const newEntry = {
+            id: row.id,
+            text: textToEmbed,
+            vector: vector,
+            importance: row.importance || 0.5,
+            category: row.category || "fact",
+            tier: row.tier || "episodic",
+            tags: row.tags || [],
+            createdAt: row.createdAt || Date.now(),
+            updatedAt: Date.now(),
+            lastAccessed: row.lastAccessed || Date.now(),
+            source: row.source || "agent_end",
+            hitCount: row.hitCount || 0,
+          };
 
-        await table.add([newEntry]);
-        fixed++;
-        console.log(`  ✓ Fixed row ${row.id.slice(0, 8)}`);
+          await table.add([newEntry]);
+          fixed++;
+          console.log(`    ✓ Fixed row ${row.id.slice(0, 8)}`);
+        } else {
+          console.log(`    [DRY RUN] Would fix this row`);
+          fixed++;
+        }
 
         // Rate limiting - wait 100ms between API calls
-        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!DRY_RUN) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
 
       } catch (error) {
-        console.error(`  ✗ Error fixing row ${row.id.slice(0, 8)}:`, error.message);
+        console.error(`    ✗ Error fixing row ${row.id.slice(0, 8)}:`, error.message);
         errors++;
       }
     } else {
       skipped++;
     }
+
+    // Show progress every 50 rows
+    if ((i + 1) % 50 === 0) {
+      console.log(`\n--- Progress: ${i + 1}/${results.length} rows processed ---\n`);
+    }
   }
 
-  console.log("\n=== Summary ===");
+  const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+  console.log("\n" + "=".repeat(60));
+  console.log("SUMMARY");
+  console.log("=".repeat(60));
+  console.log(`Total rows in database: ${results.length}`);
+  console.log(`Rows processed: ${totalProcessed}`);
   console.log(`Fixed: ${fixed} rows`);
   console.log(`Skipped: ${skipped} rows (already valid)`);
   console.log(`Errors: ${errors} rows`);
+  console.log(`Time elapsed: ${elapsed}s`);
+  console.log("=".repeat(60));
+
+  if (errors > 0) {
+    console.warn("\n⚠️  Some rows had errors. Please review the error messages above.");
+    process.exit(1);
+  }
 }
 
 fixEmbeddings().catch(console.error);

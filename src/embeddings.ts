@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.17 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.18 - Embeddings Client with LRU Cache
+ *
+ * v2.4.18 improvements:
+ * - Enhanced metadata cleaning patterns for fix-embeddings script
  *
  * v2.4.17 improvements:
  * - Sender metadata cleanup support for fix-embeddings script
@@ -29,7 +32,7 @@
  * - Max 1000 cache entries
  * - Cache statistics for monitoring
  *
- * @version 2.4.17
+ * @version 2.4.18
  * @author duan78
  */
 

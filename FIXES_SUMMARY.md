@@ -1,8 +1,68 @@
-# Memory-Claw Plugin Fixes - v2.4.17
+# Memory-Claw Plugin Fixes - v2.4.18
 
 ## Summary
 
-Fixed critical issues in the memory-claw plugin that were causing poor data quality and low capture rates.
+Enhanced metadata cleaning and improved fix-embeddings script to regenerate all embeddings for all rows with comprehensive error handling and progress indicators.
+
+## v2.4.18 Improvements
+
+### 1. Enhanced Metadata Cleaning Patterns
+**Enhancement**: Added more comprehensive metadata cleaning patterns to `cleanSenderMetadata()` function
+
+**New Patterns Added**:
+- Additional timestamp formats:
+  - `[2026-03-23 15:52:30]` (ISO format)
+  - `[03/23/2026 15:52 GMT]` (US format)
+  - `2026-03-23 15:52:30 GMT` (Plain text format)
+- System message prefixes: `System:`, `Assistant:`, `User:`, `Tool:`, `Function:`
+- Tool call artifacts: `Tool Call:`, `Function Call:`, `Result:`, `Error:`
+- Additional metadata headers: `From:`, `To:`, `Subject:`, `Date:`, `Message-ID:`
+- Empty metadata objects: `{}`
+
+**Impact**: More comprehensive cleaning of metadata prefixes from captured content, resulting in cleaner text for embedding generation.
+
+**Location**: `src/plugin-entry.ts` lines 342-367
+
+### 2. Improved fix-embeddings.js Script
+**Enhancement**: Completely rewrote the fix-embeddings.js script with better functionality
+
+**New Features**:
+- **--force flag**: Regenerate ALL embeddings, not just broken ones
+- **--dry-run flag**: Preview what would be changed without making changes
+- **Retry logic**: 3 attempts with exponential backoff (200ms, 400ms, 800ms)
+- **Progress indicators**: Detailed logging every 50 rows
+- **Enhanced summary**: Shows timing, processed/fix/skipped/error counts
+- **Better error handling**: Non-zero exit code on errors
+- **Enhanced metadata cleaning**: Same patterns as main plugin code
+
+**Usage Examples**:
+```bash
+# Fix only broken/unclean rows
+node scripts/fix-embeddings.js
+
+# Regenerate ALL embeddings (force mode)
+node scripts/fix-embeddings.js --force
+
+# Preview what would be done (dry run)
+node scripts/fix-embeddings.js --dry-run
+
+# Force regeneration with dry run preview
+node scripts/fix-embeddings.js --force --dry-run
+```
+
+**Impact**: Easier to regenerate embeddings for all rows with better error handling and visibility into the process.
+
+**Location**: `scripts/fix-embeddings.js`
+
+### 3. Version Consistency
+**Enhancement**: Updated all version references to v2.4.18:
+- `package.json`: `2.4.18`
+- `src/plugin-entry.ts`: `@version 2.4.18`
+- `src/embeddings.ts`: `@version 2.4.18`
+
+---
+
+## v2.4.17 Fixes (Previous Version)
 
 ## Problems Fixed
 

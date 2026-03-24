@@ -5,6 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.18: ENHANCED METADATA CLEANING & IMPROVED FIX-EMBEDDINGS SCRIPT
+ * - ENHANCED: Added more comprehensive timestamp patterns (ISO format, US format, etc.)
+ * - ENHANCED: Added system message prefix patterns (System:, Assistant:, User:, Tool:, Function:)
+ * - ENHANCED: Added tool call artifact patterns (Tool Call:, Function Call:, Result:, Error:)
+ * - ENHANCED: Added additional metadata headers (From:, To:, Subject:, Date:, Message-ID:)
+ * - ENHANCED: Added empty metadata object filtering
+ * - ENHANCED: Improved fix-embeddings.js script with --force, --dry-run, retry logic, and progress indicators
+ *
  * v2.4.17: SENDER METADATA CLEANUP & IMPORTANCE THRESHOLD FIX
  * - FIXED: Added cleanSenderMetadata() function to remove "Sender (untrusted metadata)" prefixes
  * - FIXED: Enhanced groupConsecutiveUserMessages to call cleanSenderMetadata on all extracted text
@@ -112,7 +120,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.17
+ * @version 2.4.18
  * @author duan78
  */
 
@@ -341,15 +349,54 @@ function filterJsonMetadata(text: string): string {
 /**
  * v2.4.17: Enhanced sender metadata cleaning
  * Removes "Sender (untrusted metadata)" prefixes and other noise from content
+ *
+ * v2.4.18 improvements:
+ * - Added more comprehensive timestamp patterns
+ * - Added system message prefix patterns
+ * - Added tool call artifact patterns
+ * - Improved metadata header detection
  */
 function cleanSenderMetadata(text: string): string {
   if (!text || typeof text !== "string") return text;
 
   // Remove sender metadata prefixes at the start of text
   const patterns = [
+    // Original patterns
     /^Sender\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
     /^Conversation\s*info\s*\(untrusted\s*metadata\):\s*\{\s*\}\s*/gi,
+
+    // Enhanced timestamp patterns - catch more variations
     /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
+    /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g, // [2026-03-23 15:52:30]
+    /^\[\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}\s+\w+\]\s*/g, // [03/23/2026 15:52 GMT]
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+\s*/g, // 2026-03-23 15:52:30 GMT
+
+    // System message prefixes
+    /^System\s*:\s*/gi,
+    /^Assistant\s*:\s*/gi,
+    /^User\s*:\s*/gi,
+    /^Tool\s*:\s*/gi,
+    /^Function\s*:\s*/gi,
+
+    // Tool call artifacts
+    /^Tool\s+Call\s*:\s*/gi,
+    /^Function\s+Call\s*:\s*/gi,
+    /^Result\s*:\s*/gi,
+    /^Error\s*:\s*/gi,
+
+    // Additional metadata headers
+    /^From\s*:\s*.+$/m, // From: someone
+    /^To\s*:\s*.+$/m, // To: someone
+    /^Subject\s*:\s*.+$/m, // Subject: something
+    /^Date\s*:\s*.+$/m, // Date: something
+    /^Message-ID\s*:\s*.+$/m, // Message-ID: xxx
+
+    // Sender/recipient patterns
+    /^Sender\s*:\s*\{\s*\}/gim,
+    /^From\s*\(untrusted\)/gim,
+
+    // Empty metadata objects
+    /^\{\s*\}\s*/g,
   ];
 
   let cleaned = text;
@@ -495,7 +542,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.16: Z.AI endpoint fix - auto-corrects api.z.ai to official Mistral API. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.18: Enhanced metadata cleaning & improved fix-embeddings script. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
