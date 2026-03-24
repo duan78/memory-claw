@@ -1,5 +1,10 @@
 /**
- * Memory Claw v2.4.17 - Capture Utilities
+ * Memory Claw v2.4.19 - Capture Utilities
+ *
+ * v2.4.19: Fixed metadata cleaning across all storage paths
+ * - Manual storage (mclaw_store) now cleans metadata
+ * - Import function (mclaw_import) now cleans metadata
+ * - All storage paths consistently use cleanSenderMetadata()
  *
  * v2.4.17: Lowered minImportance default from 0.30 to 0.25 for better factual content capture
  *
@@ -19,7 +24,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.17
+ * @version 2.4.19
  * @author duan78
  */
 

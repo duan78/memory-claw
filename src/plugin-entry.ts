@@ -5,6 +5,12 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.19: METADATA CLEANING BUG FIXES
+ * - FIXED: Manual storage (mclaw_store) now cleans metadata before storing
+ * - FIXED: Import function (mclaw_import) now cleans metadata from imported memories
+ * - FIXED: All text storage paths now consistently use cleanSenderMetadata()
+ * - IMPROVED: Ensured metadata removal across all storage methods
+ *
  * v2.4.18: ENHANCED METADATA CLEANING & IMPROVED FIX-EMBEDDINGS SCRIPT
  * - ENHANCED: Added more comprehensive timestamp patterns (ISO format, US format, etc.)
  * - ENHANCED: Added system message prefix patterns (System:, Assistant:, User:, Tool:, Function:)
@@ -120,7 +126,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.18
+ * @version 2.4.19
  * @author duan78
  */
 
@@ -259,10 +265,12 @@ async function importFromJson(
       continue;
     }
 
-    const vector = await embeddings.embed(memo.text);
+    // v2.4.19: Clean metadata from imported text
+    const cleanedText = cleanSenderMetadata(memo.text);
+    const vector = await embeddings.embed(cleanedText);
 
     await db.store({
-      text: memo.text,
+      text: cleanedText,
       vector,
       importance: memo.importance,
       category: memo.category,
@@ -542,7 +550,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.18: Enhanced metadata cleaning & improved fix-embeddings script. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.19: Fixed metadata cleaning across all storage paths. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -629,7 +637,9 @@ const plugin = {
         async execute(_toolCallId, params) {
           try {
             const { text, importance, category } = params as { text: string; importance?: number; category?: string };
-            const normalizedText = normalizeText(text);
+            // v2.4.19: Clean metadata from text before storing (manual storage path was missing this)
+            const cleanedText = cleanSenderMetadata(text);
+            const normalizedText = normalizeText(cleanedText);
             const detectedCategory = category || detectCategory(text);
             const finalImportance = importance ?? calculateImportance(normalizedText, detectedCategory, "manual");
 
