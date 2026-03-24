@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * Memory Claw v2.4.21 - Fix/Regenerate Embeddings
+ * Memory Claw v2.4.25 - Fix/Regenerate Embeddings
  *
- * v2.4.21 improvements:
- * - FIXED: Enhanced metadata cleaning with more comprehensive patterns
+ * v2.4.25 improvements:
+ * - FIXED: Synchronized metadata cleaning patterns with text.ts v2.4.24
+ * - FIXED: Uses shared cleanSenderMetadata patterns for consistency
  * - FIXED: Improved vector detection for LanceDB FixedSizeList format
  * - FIXED: Better handling of edge cases in text cleaning
  * - IMPROVED: More robust empty/null vector detection
@@ -55,40 +56,47 @@ if (!API_KEY) {
 }
 
 /**
- * v2.4.21: Enhanced metadata cleaning with more comprehensive patterns
- * - Added more timestamp format variations
- * - Added system/tool call patterns
- * - Added header removal patterns
- * - Improved handling of edge cases
- * - FIXED: Better handling of JSON metadata blocks with ```json wrapper (regardless of position)
+ * v2.4.25: Enhanced metadata cleaning synchronized with text.ts v2.4.24
+ * - Shared cleanSenderMetadata function for consistent metadata cleaning
+ * - Enhanced with better whitespace and newline handling
+ * - Improved metadata cleaning patterns from v2.4.21
+ *
+ * Patterns include:
+ * - JSON metadata blocks with ```json wrapper
+ * - Inline JSON objects after "Sender (untrusted metadata):"
+ * - Multi-line JSON objects
+ * - Timestamp patterns (ISO, US, and custom formats)
+ * - System message prefixes (System:, Assistant:, User:, Tool:, Function:)
+ * - Tool call artifacts
+ * - Additional metadata headers (From:, To:, Subject:, Date:, Message-ID:)
+ * - System artifacts ([INST], [SYSTEM], instruction tags, etc.)
  */
 function cleanSenderMetadata(text) {
   if (!text || typeof text !== "string") return text;
 
   // Remove sender metadata prefixes at the start of text
   const patterns = [
-    // v2.4.21: FIXED patterns to match entire metadata blocks regardless of position
-    // These patterns match the full metadata blocks with ```json wrapper
+    // JSON metadata blocks with ```json wrapper (regardless of position)
     /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```json[^`]*```/gi,
 
     // Also match without json identifier
     /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```/gi,
 
-    // v2.4.21: More aggressive patterns to catch JSON metadata blocks
+    // More aggressive patterns to catch JSON metadata blocks
     /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
 
-    // v2.4.21: FIX for inline JSON after "Sender (untrusted metadata):"
+    // FIX for inline JSON after "Sender (untrusted metadata):"
     // Matches: "Sender (untrusted metadata): {...}" where {...} is any JSON object
     /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[^}]*\}\s*/gim,
 
-    // v2.4.21: FIX for multi-line JSON objects after "Sender (untrusted metadata):"
+    // FIX for multi-line JSON objects after "Sender (untrusted metadata):"
     // Matches JSON objects that span multiple lines
     /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[\s\S]*?\n\}\s*/gim,
 
-    // v2.4.21: FIX for simple "Sender:" prefix with inline JSON
+    // FIX for simple "Sender:" prefix with inline JSON
     /^Sender\s*:\s*\{[^}]*\}\s*/gim,
 
-    // v2.4.21: FIX for "Sender:" or "Sender (untrusted):" followed by any text until newline
+    // FIX for "Sender:" or "Sender (untrusted):" followed by any text until newline
     /^(?:Sender\s*\(untrusted\)|Sender)\s*:\s*.+\n?/gim,
 
     // Enhanced timestamp patterns - catch more variations
@@ -124,7 +132,7 @@ function cleanSenderMetadata(text) {
     // Empty metadata objects
     /^\{\s*\}\s*/g,
 
-    // v2.4.21: Additional patterns for system artifacts
+    // Additional patterns for system artifacts
     /^\[INST\]/gi,
     /^\[\/INST\]/gi,
     /^\[SYSTEM\]/gi,
@@ -133,7 +141,7 @@ function cleanSenderMetadata(text) {
     /<system[^>]*>/gi,
     /<prompt[^>]*>/gi,
 
-    // v2.4.21: JSON metadata patterns
+    // JSON metadata patterns
     /^\s*\{\s*"role"\s*:\s*"tool"/gi,
     /^\s*\{\s*"role"\s*:\s*"system"/gi,
     /^\s*\{\s*"tool_call_id"/gi,
@@ -223,7 +231,7 @@ async function generateEmbedding(text, retries = 3) {
 async function fixEmbeddings() {
   const startTime = Date.now();
   console.log("=".repeat(60));
-  console.log("Memory Claw v2.4.21 - Embedding Fix/Regeneration Script");
+  console.log("Memory Claw v2.4.25 - Embedding Fix/Regeneration Script");
   console.log("=".repeat(60));
   console.log(`Mode: ${FORCE_REGENERATE_ALL ? "FORCE REGENERATE ALL" : "Fix only broken/unclean rows"}`);
   console.log(`Dry run: ${DRY_RUN ? "YES (no changes will be made)" : "NO"}`);

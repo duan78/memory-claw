@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.24",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.24: Fixed memory-claw with shared metadata cleaning, enhanced capture quality, and improved text utilities.",
+  "version": "2.4.25",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.25: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns for consistency.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

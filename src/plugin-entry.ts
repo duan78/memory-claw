@@ -5,12 +5,11 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.24: SHARED METADATA CLEANING + IMPROVED CAPTURE QUALITY
- * - FIXED: Created shared cleanSenderMetadata utility in text.ts for consistency
- * - FIXED: Eliminated code duplication between plugin-entry.ts and fix-embeddings.js
- * - IMPROVED: Enhanced embeddings.embed() to use metadata cleaning for better quality
- * - IMPROVED: Better text normalization with comprehensive metadata removal
- * - IMPROVED: All embeddings now generated from consistently cleaned text
+ * v2.4.25: SYNCHRONIZED METADATA CLEANING + ENHANCED CAPTURE QUALITY
+ * - FIXED: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns
+ * - FIXED: Updated fix-embeddings.js to version 2.4.25 for consistency
+ * - IMPROVED: Added explicit metadata cleaning in processMessages for maximum quality
+ * - IMPROVED: Ensured all embeddings generated from consistently cleaned text
  * - REGENERATED: All embeddings regenerated with force option for cleanliness
  *
  * v2.4.23: CRITICAL CAPTURE BUG FIX
@@ -153,7 +152,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.24
+ * @version 2.4.25
  * @author duan78
  */
 
@@ -528,7 +527,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.24: Shared metadata cleaning + improved capture quality. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.25: Synchronized metadata cleaning + enhanced capture quality. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -582,7 +581,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.24: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.25: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1076,8 +1075,11 @@ const plugin = {
           const category = detectCategory(combinedText);
           console.log("[memory-claw DEBUG] Category detected:", category);
 
+          // v2.4.25: Explicit metadata cleaning before embedding for maximum quality
+          // Note: embeddings.embed() also cleans, but this ensures consistency
+          const textForEmbedding = cleanSenderMetadata(combinedText);
           console.log("[memory-claw DEBUG] Calling embeddings.embed...");
-          const vector = await embeddings.embed(combinedText);
+          const vector = await embeddings.embed(textForEmbedding);
           console.log("[memory-claw DEBUG] Embedding succeeded, vector dimension:", vector.length);
 
           // DEBUG: Log vector dimension to diagnose silent failures

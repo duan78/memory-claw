@@ -1,4 +1,4 @@
-# Memory Claw v2.4.9
+# Memory Claw v2.4.25
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -398,7 +398,24 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.4.9 (Current)
+### v2.4.25 (Current)
+- **Synchronized Metadata Cleaning:**
+  - FIXED: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns
+  - FIXED: Updated fix-embeddings.js to version 2.4.25 for consistency
+  - IMPROVED: Added explicit metadata cleaning in processMessages for maximum quality
+  - IMPROVED: Ensured all embeddings generated from consistently cleaned text
+- **Maintenance:**
+  - Regenerated all embeddings with force option for cleanliness
+  - Updated version numbers across all files
+
+### v2.4.24
+- **Shared Metadata Cleaning:**
+  - FIXED: Created shared cleanSenderMetadata utility in text.ts for consistency
+  - FIXED: Eliminated code duplication between plugin-entry.ts and fix-embeddings.js
+  - IMPROVED: Enhanced embeddings.embed() to use metadata cleaning for better quality
+  - IMPROVED: Better text normalization with comprehensive metadata removal
+
+### v2.4.9
 - **CRITICAL BUG FIXES:**
   - FIXED: Corrected mistral-embed vector dimension (256 not 1024) - was causing DB errors
   - FIXED: Updated dimension detection logic for all embedding models
@@ -496,4 +513,4 @@ ISC
 
 ---
 
-**Memory Claw v2.4.9 — Your memory, enhanced.**
+**Memory Claw v2.4.25 — Your memory, enhanced.**
