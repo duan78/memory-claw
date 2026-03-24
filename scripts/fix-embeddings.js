@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 /**
- * Memory Claw v2.4.26 - Fix/Regenerate Embeddings
+ * Memory Claw v2.4.27 - Fix/Regenerate Embeddings
+ *
+ * v2.4.27 improvements:
+ * - FIXED: Synchronized with text.ts v2.4.27 enhanced metadata cleaning
+ * - FIXED: Uses comprehensive cleanSenderMetadata patterns from text.ts
+ * - FIXED: Supports nested JSON metadata blocks
+ * - FIXED: Better handling of malformed metadata
+ * - FIXED: Enhanced detection and removal of tool/system artifacts
+ * - FIXED: Added support for Claude-specific metadata formats
  *
  * v2.4.26 improvements:
  * - FIXED: Auto-capture storage now uses cleaned text (was using unnormalized combinedText)
@@ -8,21 +16,9 @@
  * - FIXED: Ensured embeddings and stored text always use consistently cleaned input
  * - IMPROVED: Better capture quality with explicit metadata cleaning
  *
- * v2.4.25 improvements:
- * - FIXED: Synchronized metadata cleaning patterns with text.ts v2.4.24
- * - FIXED: Uses shared cleanSenderMetadata patterns for consistency
- * - FIXED: Improved vector detection for LanceDB FixedSizeList format
- * - FIXED: Better handling of edge cases in text cleaning
- * - IMPROVED: More robust empty/null vector detection
- *
- * v2.4.20 improvements:
- * - FIXED: Config path now looks in openclaw.json instead of config.json
- * - FIXED: Uses update() method instead of delete+add to prevent data loss
- * - FIXED: Fallback to delete+add if update fails (for schema compatibility)
- *
  * This script:
  * 1. Regenerates embeddings for ALL rows or only broken rows (with --force flag)
- * 2. Cleans content by removing "Sender (untrusted metadata)" prefixes
+ * 2. Cleans content by removing ALL forms of sender metadata and system artifacts
  * 3. Verifies the embeddings API is working correctly
  * 4. Provides detailed progress indicators and error handling
  *
@@ -62,104 +58,205 @@ if (!API_KEY) {
 }
 
 /**
- * v2.4.25: Enhanced metadata cleaning synchronized with text.ts v2.4.24
- * - Shared cleanSenderMetadata function for consistent metadata cleaning
- * - Enhanced with better whitespace and newline handling
- * - Improved metadata cleaning patterns from v2.4.21
+ * v2.4.27: Comprehensive metadata cleaning synchronized with text.ts v2.4.27
+ * - Enhanced cleanSenderMetadata function for consistent metadata cleaning
+ * - Multi-phase cleaning approach for better accuracy
+ * - Support for nested JSON metadata blocks
+ * - Better handling of malformed metadata
+ * - Enhanced detection and removal of tool/system artifacts
+ * - Added support for Claude-specific metadata formats
  *
- * Patterns include:
- * - JSON metadata blocks with ```json wrapper
- * - Inline JSON objects after "Sender (untrusted metadata):"
- * - Multi-line JSON objects
- * - Timestamp patterns (ISO, US, and custom formats)
+ * This function removes ALL forms of sender metadata and system artifacts:
+ * - JSON metadata blocks (```json wrapped, inline, multi-line, nested)
+ * - Sender metadata prefixes (all variants)
+ * - Timestamp patterns (ISO, US, custom, international)
  * - System message prefixes (System:, Assistant:, User:, Tool:, Function:)
- * - Tool call artifacts
- * - Additional metadata headers (From:, To:, Subject:, Date:, Message-ID:)
- * - System artifacts ([INST], [SYSTEM], instruction tags, etc.)
+ * - Tool call artifacts (all variants)
+ * - Email-style headers (From:, To:, Subject:, Date:, Message-ID:, CC:, BCC:)
+ * - System artifacts ([INST], [SYSTEM], instruction tags, special tokens)
+ * - Claude-specific formats (<thinking>, <reflection>, etc.)
+ * - Empty metadata objects and whitespace
  */
 function cleanSenderMetadata(text) {
   if (!text || typeof text !== "string") return text;
 
-  // Remove sender metadata prefixes at the start of text
-  const patterns = [
+  let cleaned = text;
+
+  // Phase 1: Remove JSON metadata blocks (most aggressive patterns first)
+  const jsonPatterns = [
     // JSON metadata blocks with ```json wrapper (regardless of position)
-    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```json[^`]*```/gi,
+    /(?:Sender|Conversation\s*info|Context|Metadata)\s*\(untrusted\s*metadata\):\s*```json\s*\n?[\s\S]*?```\s*/gi,
 
     // Also match without json identifier
-    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```/gi,
+    /(?:Sender|Conversation\s*info|Context|Metadata)\s*\(untrusted\s*metadata\):\s*```\s*\n?[\s\S]*?```\s*/gi,
 
     // More aggressive patterns to catch JSON metadata blocks
-    /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
+    /^(Sender|Conversation\s*info|Context|Metadata)\s*\(untrusted\s*metadata\):\s*```\s*\n?[\s\S]*?```\s*$/gim,
 
     // FIX for inline JSON after "Sender (untrusted metadata):"
     // Matches: "Sender (untrusted metadata): {...}" where {...} is any JSON object
-    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[^}]*\}\s*/gim,
+    /^(?:Sender|Conversation\s*info|Context|Metadata)\s*\(untrusted\s*metadata\):\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*/gim,
 
     // FIX for multi-line JSON objects after "Sender (untrusted metadata):"
-    // Matches JSON objects that span multiple lines
-    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[\s\S]*?\n\}\s*/gim,
+    // Matches JSON objects that span multiple lines (with nesting support)
+    /^(?:Sender|Conversation\s*info|Context|Metadata)\s*\(untrusted\s*metadata\):\s*\{[\s\S]*?\n\}\s*/gim,
 
     // FIX for simple "Sender:" prefix with inline JSON
-    /^Sender\s*:\s*\{[^}]*\}\s*/gim,
+    /^Sender\s*:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*/gim,
 
     // FIX for "Sender:" or "Sender (untrusted):" followed by any text until newline
     /^(?:Sender\s*\(untrusted\)|Sender)\s*:\s*.+\n?/gim,
 
-    // Enhanced timestamp patterns - catch more variations
-    /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
-    /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g, // [2026-03-23 15:52:30]
-    /^\[\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}\s+\w+\]\s*/g, // [03/23/2026 15:52 GMT]
-    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+\s*/g, // 2026-03-23 15:52:30 GMT
+    // v2.4.27: Additional patterns for metadata in different formats
+    /^metadata:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*/gim,
+    /^context:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*/gim,
+    /^info:\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*/gim,
+  ];
 
-    // System message prefixes
+  for (const pattern of jsonPatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 2: Remove timestamp patterns (all variations)
+  const timestampPatterns = [
+    // [Mon 2026-03-23 15:52 GMT+1]
+    /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g,
+    // [2026-03-23 15:52:30]
+    /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g,
+    // [03/23/2026 15:52 GMT]
+    /^\[\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}\s+\w+\]\s*/g,
+    // 2026-03-23 15:52:30 GMT
+    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+\s*/g,
+    // v2.4.27: Additional timestamp formats
+    /^\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\s*/g,
+    /^\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}\s*/g,
+    // ISO 8601 with timezone
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\s*/g,
+    // Unix timestamp
+    /^\d{10,13}\s*/g,
+  ];
+
+  for (const pattern of timestampPatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 3: Remove system message prefixes
+  const systemMessagePatterns = [
     /^System\s*:\s*/gi,
     /^Assistant\s*:\s*/gi,
     /^User\s*:\s*/gi,
     /^Tool\s*:\s*/gi,
     /^Function\s*:\s*/gi,
+    /^Model\s*:\s*/gi,
+    /^Bot\s*:\s*/gi,
+    /^Agent\s*:\s*/gi,
+  ];
 
-    // Tool call artifacts
+  for (const pattern of systemMessagePatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 4: Remove tool call artifacts
+  const toolCallPatterns = [
     /^Tool\s+Call\s*:\s*/gi,
     /^Function\s+Call\s*:\s*/gi,
     /^Result\s*:\s*/gi,
     /^Error\s*:\s*/gi,
+    /^Response\s*:\s*/gi,
+    /^Output\s*:\s*/gi,
+    // v2.4.27: Additional tool-related patterns
+    /^Called\s*:\s*/gi,
+    /^Executed\s*:\s*/gi,
+    /^Returned\s*:\s*/gi,
+  ];
 
-    // Additional metadata headers
+  for (const pattern of toolCallPatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 5: Remove email-style headers
+  const headerPatterns = [
     /^From\s*:\s*.+$/m, // From: someone
     /^To\s*:\s*.+$/m, // To: someone
     /^Subject\s*:\s*.+$/m, // Subject: something
     /^Date\s*:\s*.+$/m, // Date: something
     /^Message-ID\s*:\s*.+$/m, // Message-ID: xxx
-
-    // Sender/recipient patterns
-    /^Sender\s*:\s*\{\s*\}/gim,
-    /^From\s*\(untrusted\)/gim,
-
-    // Empty metadata objects
-    /^\{\s*\}\s*/g,
-
-    // Additional patterns for system artifacts
-    /^\[INST\]/gi,
-    /^\[\/INST\]/gi,
-    /^\[SYSTEM\]/gi,
-    /^<\|.*?\|>/g,
-    /<instruction[^>]*>/gi,
-    /<system[^>]*>/gi,
-    /<prompt[^>]*>/gi,
-
-    // JSON metadata patterns
-    /^\s*\{\s*"role"\s*:\s*"tool"/gi,
-    /^\s*\{\s*"role"\s*:\s*"system"/gi,
-    /^\s*\{\s*"tool_call_id"/gi,
-    /^\s*\{\s*"function"/gi,
+    // v2.4.27: Additional email headers
+    /^CC\s*:\s*.+$/m, // CC: recipients
+    /^BCC\s*:\s*.+$/m, // BCC: recipients
+    /^Reply-To\s*:\s*.+$/m, // Reply-To: address
+    /^References\s*:\s*.+$/m, // References: message-ids
+    /^In-Reply-To\s*:\s*.+$/m, // In-Reply-To: message-id
   ];
 
-  let cleaned = text;
-  for (const pattern of patterns) {
+  for (const pattern of headerPatterns) {
     cleaned = cleaned.replace(pattern, "");
   }
 
-  return cleaned.trim();
+  // Phase 6: Remove system artifacts and special tokens
+  const systemArtifactPatterns = [
+    /^\[INST\]/gi,
+    /^\[\/INST\]/gi,
+    /^\[SYSTEM\]/gi,
+    /^\[\/SYSTEM\]/gi,
+    /^\[USER\]/gi,
+    /^\[\/USER\]/gi,
+    /^\[ASSISTANT\]/gi,
+    /^\[\/ASSISTANT\]/gi,
+    /^<\|.*?\|>/g,
+    /<instruction[^>]*>/gi,
+    /<\/instruction>/gi,
+    /<system[^>]*>/gi,
+    /<\/system>/gi,
+    /<prompt[^>]*>/gi,
+    /<\/prompt>/gi,
+    // v2.4.27: Claude-specific special tokens
+    /<thinking[^>]*>/gi,
+    /<\/thinking>/gi,
+    /<reflection[^>]*>/gi,
+    /<\/reflection>/gi,
+    /<observation[^>]*>/gi,
+    /<\/observation>/gi,
+    /<output[^>]*>/gi,
+    /<\/output>/gi,
+  ];
+
+  for (const pattern of systemArtifactPatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 7: Remove JSON metadata patterns at start of lines
+  const jsonMetadataPatterns = [
+    /^\s*\{\s*"role"\s*:\s*"tool"/gi,
+    /^\s*\{\s*"role"\s*:\s*"system"/gi,
+    /^\s*\{\s*"tool_call_id"/gi,
+    /^\s*\{\s*"function_call"/gi,
+    /^\s*\{\s*"function"/gi,
+    // v2.4.27: Additional JSON role patterns
+    /^\s*\{\s*"role"\s*:\s*"user"/gi,
+    /^\s*\{\s*"role"\s*:\s*"assistant"/gi,
+    /^\s*\{\s*"content"/gi,
+  ];
+
+  for (const pattern of jsonMetadataPatterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+
+  // Phase 8: Remove empty metadata objects and clean whitespace
+  cleaned = cleaned
+    .replace(/^\{\s*\}\s*/g, "")
+    .replace(/^\[\s*\]\s*/g, "")
+    .replace(/^Sender\s*:\s*\{\s*\}/gim, "")
+    .replace(/^From\s*\(untrusted\)\s*/gim, "")
+    .replace(/^Metadata\s*:\s*\{\s*\}/gim, "");
+
+  // Phase 9: Final cleanup - remove excessive whitespace and trim
+  cleaned = cleaned
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  return cleaned;
 }
 
 /**
@@ -237,7 +334,7 @@ async function generateEmbedding(text, retries = 3) {
 async function fixEmbeddings() {
   const startTime = Date.now();
   console.log("=".repeat(60));
-  console.log("Memory Claw v2.4.26 - Embedding Fix/Regeneration Script");
+  console.log("Memory Claw v2.4.27 - Embedding Fix/Regeneration Script");
   console.log("=".repeat(60));
   console.log(`Mode: ${FORCE_REGENERATE_ALL ? "FORCE REGENERATE ALL" : "Fix only broken/unclean rows"}`);
   console.log(`Dry run: ${DRY_RUN ? "YES (no changes will be made)" : "NO"}`);

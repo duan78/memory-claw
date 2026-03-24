@@ -1,5 +1,11 @@
 /**
- * Memory Claw v2.4.24 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.27 - Embeddings Client with LRU Cache
+ *
+ * v2.4.27 improvements:
+ * - Enhanced embed() to use comprehensive cleanSenderMetadata for consistent metadata cleaning
+ * - Improved capture quality by ensuring embeddings always use thoroughly cleaned text
+ * - Better integration with shared text utilities (v2.4.27)
+ * - Multi-phase metadata cleaning for better accuracy
  *
  * v2.4.24 improvements:
  * - Enhanced embed() to use cleanSenderMetadata for consistent metadata cleaning
@@ -11,7 +17,7 @@
  * - Enhanced metadata cleaning patterns with more system artifacts
  * - Improved vector detection for LanceDB FixedSizeList format
  *
- * @version 2.4.24
+ * @version 2.4.27
  * @author duan78
  */
 
