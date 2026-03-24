@@ -77,6 +77,20 @@ function cleanSenderMetadata(text) {
     // v2.4.21: More aggressive patterns to catch JSON metadata blocks
     /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
 
+    // v2.4.21: FIX for inline JSON after "Sender (untrusted metadata):"
+    // Matches: "Sender (untrusted metadata): {...}" where {...} is any JSON object
+    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[^}]*\}\s*/gim,
+
+    // v2.4.21: FIX for multi-line JSON objects after "Sender (untrusted metadata):"
+    // Matches JSON objects that span multiple lines
+    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[\s\S]*?\n\}\s*/gim,
+
+    // v2.4.21: FIX for simple "Sender:" prefix with inline JSON
+    /^Sender\s*:\s*\{[^}]*\}\s*/gim,
+
+    // v2.4.21: FIX for "Sender:" or "Sender (untrusted):" followed by any text until newline
+    /^(?:Sender\s*\(untrusted\)|Sender)\s*:\s*.+\n?/gim,
+
     // Enhanced timestamp patterns - catch more variations
     /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
     /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g, // [2026-03-23 15:52:30]
