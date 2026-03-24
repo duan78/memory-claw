@@ -1,0 +1,165 @@
+/**
+ * Memory Claw v2.4.21 - Embeddings Client with LRU Cache
+ *
+ * v2.4.21 improvements:
+ * - Fixed mclaw_store to embed cleaned text instead of original (critical bug)
+ * - Enhanced metadata cleaning patterns with more system artifacts
+ * - Improved vector detection for LanceDB FixedSizeList format
+ *
+ * v2.4.19 improvements:
+ * - Fixed metadata cleaning across all storage paths
+ *
+ * v2.4.18 improvements:
+ * - Enhanced metadata cleaning patterns for fix-embeddings script
+ *
+ * v2.4.16 improvements:
+ * - CRITICAL FIX: Z.AI endpoint auto-correction - api.z.ai/v1/embeddings returns 404
+ * - Automatically redirects Z.AI baseUrl to Mistral official API (api.mistral.ai/v1)
+ *
+ * v2.4.14 improvements:
+ * - CRITICAL FIX: Use native fetch instead of OpenAI library to avoid dimension bug
+ * - CRITICAL FIX: mistral-embed returns 1024 dimensions (verified via API)
+ *
+ * v2.4.9 improvements:
+ * - CRITICAL FIX: Corrected default vector dimension for mistral-embed (256 not 1024)
+ * - Improved dimension detection with proper fallback
+ *
+ * v2.4.7 improvements:
+ * - Fixed dimensions parameter condition
+ * - Improved vector dimension fallback
+ *
+ * v2.4.6 improvements:
+ * - Improved hash function to reduce collision risk
+ * - Better cache key generation with FNV-1a algorithm
+ *
+ * v2.4.0 improvements:
+ * - LRU cache with TTL (1 hour) to avoid redundant API calls
+ * - Max 1000 cache entries
+ * - Cache statistics for monitoring
+ *
+ * @version 2.4.21
+ * @author duan78
+ */
+import { normalizeText } from "./utils/text.js";
+export class Embeddings {
+    model;
+    dimensions;
+    apiKey;
+    baseUrl;
+    detectedVectorDim = null;
+    cache = new Map();
+    cacheTTL = 3600000; // 1 hour in milliseconds
+    maxCacheSize = 1000;
+    constructor(apiKey, model, baseUrl, dimensions) {
+        this.model = model;
+        this.dimensions = dimensions;
+        this.apiKey = apiKey;
+        // FIX: Z.AI keys should use Mistral official endpoint, not api.z.ai
+        // Z.AI's /embeddings endpoint returns 404, must use Mistral's API directly
+        if (baseUrl && baseUrl.includes("api.z.ai")) {
+            console.warn("memory-claw: Z.AI endpoint detected, switching to Mistral official API (api.z.ai/v1/embeddings returns 404)");
+            this.baseUrl = "https://api.mistral.ai/v1";
+        }
+        else {
+            this.baseUrl = baseUrl || "https://api.mistral.ai/v1";
+        }
+    }
+    /**
+     * FNV-1a hash function for better cache key distribution
+     * Reduces collision risk compared to simple hash
+     */
+    hashText(text) {
+        // FNV-1a 32-bit hash algorithm
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < text.length; i++) {
+            hash ^= text.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193);
+        }
+        // Combine with model name for cache key
+        return `${this.model}:${(hash >>> 0).toString(16)}`;
+    }
+    /**
+     * Clean expired entries from cache (called periodically)
+     */
+    cleanExpiredEntries() {
+        const now = Date.now();
+        for (const [key, entry] of this.cache.entries()) {
+            if (now - entry.ts > this.cacheTTL) {
+                this.cache.delete(key);
+            }
+        }
+    }
+    async embed(text) {
+        const normalizedText = normalizeText(text);
+        const hash = this.hashText(normalizedText);
+        // Check cache
+        const cached = this.cache.get(hash);
+        if (cached && Date.now() - cached.ts < this.cacheTTL) {
+            return cached.vector;
+        }
+        // Clean expired entries periodically (when cache is getting full)
+        if (this.cache.size >= this.maxCacheSize * 0.8) {
+            this.cleanExpiredEntries();
+        }
+        try {
+            // Use native fetch instead of OpenAI library to avoid dimension bugs
+            const response = await fetch(`${this.baseUrl}/embeddings`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${this.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: this.model,
+                    input: normalizedText,
+                }),
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Embedding API error: ${response.status} ${response.statusText} - ${errorText}`);
+            }
+            const data = await response.json();
+            const vector = data.data[0].embedding;
+            // Detect actual vector dimension on first embedding
+            if (!this.detectedVectorDim) {
+                this.detectedVectorDim = vector.length;
+                if (this.dimensions && this.dimensions !== vector.length) {
+                    console.warn(`memory-claw: Vector dimension mismatch! Config: ${this.dimensions}, Actual: ${vector.length}. Using actual dimension.`);
+                }
+            }
+            // Store in cache with LRU eviction
+            if (this.cache.size >= this.maxCacheSize) {
+                // Remove oldest entry (first in Map)
+                const firstKey = this.cache.keys().next().value;
+                if (firstKey) {
+                    this.cache.delete(firstKey);
+                }
+            }
+            this.cache.set(hash, { vector, ts: Date.now() });
+            return vector;
+        }
+        catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Embedding failed: ${error.message}`);
+            }
+            throw error;
+        }
+    }
+    getVectorDim() {
+        // CRITICAL FIX: mistral-embed returns 1024 dimensions (verified via API)
+        if (this.model.includes("mistral-embed")) {
+            return this.detectedVectorDim || this.dimensions || 1024;
+        }
+        return this.detectedVectorDim || (this.dimensions && this.dimensions > 0 ? this.dimensions : 1024);
+    }
+    /**
+     * Get cache statistics for monitoring
+     */
+    getCacheStats() {
+        return {
+            size: this.cache.size,
+            maxSize: this.maxCacheSize,
+            ttlMs: this.cacheTTL,
+        };
+    }
+}

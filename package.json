@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.22",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.22: Fixed inline JSON metadata cleaning + all tests passing.",
+  "version": "2.4.23",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.23: Fixed capture bug - stats now only count actual storage.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

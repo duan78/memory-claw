@@ -5,6 +5,12 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.23: CRITICAL CAPTURE BUG FIX
+ * - FIXED: stats.capture() was being called even when nothing was stored
+ * - FIXED: Added comprehensive debugging to diagnose capture issues
+ * - FIXED: Only increment capture stats when actual storage occurs
+ * - IMPROVED: Better logging to understand why messages are filtered
+ *
  * v2.4.22: CRITICAL METADATA CLEANING FIX
  * - FIXED: Inline JSON after "Sender (untrusted metadata):" now properly removed
  * - FIXED: Multi-line JSON objects now properly handled
@@ -139,7 +145,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.22
+ * @version 2.4.23
  * @author duan78
  */
 
@@ -467,16 +473,22 @@ function cleanSenderMetadata(text: string): string {
 }
 
 function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
+  console.log("[memory-claw DEBUG] groupConsecutiveUserMessages called with", messages.length, "messages");
   const groups: GroupedMessage[] = [];
   let currentGroup: string[] = [];
   let currentTimestamps: number[] = [];
 
-  for (const msg of messages) {
-    if (!msg || typeof msg !== "object") continue;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") {
+      console.log("[memory-claw DEBUG] Message", i, "skipped: not an object");
+      continue;
+    }
     const msgObj = msg as Record<string, unknown>;
 
     // v2.4.12: Improved role check - handle both 'user' and lowercase 'user'
     const role = msgObj.role;
+    console.log("[memory-claw DEBUG] Message", i, "role:", role);
     if (role !== "user") {
       if (currentGroup.length > 0) {
         groups.push({
@@ -574,6 +586,11 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
     });
   }
 
+  console.log("[memory-claw DEBUG] Returning", groups.length, "groups");
+  for (let i = 0; i < groups.length; i++) {
+    console.log("[memory-claw DEBUG] Group", i, "text length:", groups[i].combinedText.length, "messages:", groups[i].messageCount);
+  }
+
   return groups;
 }
 
@@ -601,7 +618,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.21: Fixed embedding bug + improved capture quality + enhanced metadata cleaning. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.23: Fixed capture bug - stats now only count actual storage. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -655,7 +672,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.21: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.23: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1075,7 +1092,11 @@ const plugin = {
     // ========================================================================
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
+      console.log("[memory-claw DEBUG] processMessages called with", messages.length, "messages");
+
       const grouped = groupConsecutiveUserMessages(messages);
+      console.log("[memory-claw DEBUG] Grouped into", grouped.length, "groups");
+
       if (grouped.length === 0) {
         if (cfg.enableStats) {
           api.logger.info("memory-claw: No grouped messages to process");
@@ -1097,6 +1118,8 @@ const plugin = {
 
       for (const group of grouped) {
         const { combinedText, messageCount } = group;
+        console.log("[memory-claw DEBUG] Processing group with", messageCount, "messages, text length:", combinedText.length);
+        console.log("[memory-claw DEBUG] Text preview:", combinedText.slice(0, 100).replace(/\n/g, " "));
 
         try {
           const captureResult = shouldCapture(
@@ -1107,6 +1130,8 @@ const plugin = {
             source,
             cfg.minCaptureImportance || 0.25  // v2.4.17: Lowered from 0.30 to 0.25 for better capture rate
           );
+
+          console.log("[memory-claw DEBUG] shouldCapture returned:", captureResult);
 
           // v2.4.15: DEBUG - Log why messages are being filtered
           if (cfg.enableStats) {
@@ -1139,19 +1164,26 @@ const plugin = {
           }
 
           const category = detectCategory(combinedText);
+          console.log("[memory-claw DEBUG] Category detected:", category);
+
+          console.log("[memory-claw DEBUG] Calling embeddings.embed...");
           const vector = await embeddings.embed(combinedText);
+          console.log("[memory-claw DEBUG] Embedding succeeded, vector dimension:", vector.length);
 
           // DEBUG: Log vector dimension to diagnose silent failures
           if (cfg.enableStats) {
             api.logger.info(`memory-claw: Embedding vector dimension: ${vector.length}D`);
           }
 
+          console.log("[memory-claw DEBUG] Searching for duplicates...");
           const vectorMatches = await db.search(vector, 3, 0.90, false);
+          console.log("[memory-claw DEBUG] Found", vectorMatches.length, "potential duplicates");
 
           let isDuplicate = false;
           for (const match of vectorMatches) {
             if (calculateTextSimilarity(combinedText, match.text) > 0.85) {
               isDuplicate = true;
+              console.log("[memory-claw DEBUG] Duplicate detected, similarity:", calculateTextSimilarity(combinedText, match.text));
               break;
             }
           }
@@ -1162,7 +1194,9 @@ const plugin = {
           }
 
           const determinedTier = tierManager.determineTier(captureResult.importance, category, source);
+          console.log("[memory-claw DEBUG] Tier determined:", determinedTier);
 
+          console.log("[memory-claw DEBUG] Calling db.store...");
           await db.store({
             text: normalizeText(combinedText),
             vector,
@@ -1171,9 +1205,12 @@ const plugin = {
             source,
             tier: determinedTier,
           });
+          console.log("[memory-claw DEBUG] db.store succeeded!");
           rateLimiter.recordCapture();
           stored++;
+          console.log("[memory-claw DEBUG] Stored count now:", stored);
         } catch (error) {
+          console.error("[memory-claw DEBUG] Error in processMessages loop:", error);
           stats.error("processMessages", error instanceof Error ? error.message : String(error));
           console.error("memory-claw: Error processing message:", error);
           if (error instanceof Error && error.stack) {
@@ -1182,7 +1219,11 @@ const plugin = {
         }
       }
 
-      if (stored > 0 || skippedLowImportance > 0 || skippedNoTrigger > 0 || skippedDuplicate > 0 || skippedRateLimit > 0 || skippedOther > 0) {
+      console.log("[memory-claw DEBUG] Final counts - stored:", stored, "skippedLowImportance:", skippedLowImportance, "skippedNoTrigger:", skippedNoTrigger, "skippedDuplicate:", skippedDuplicate, "skippedRateLimit:", skippedRateLimit);
+
+      // v2.4.23 FIX: Only call stats.capture() when we actually store something
+      // The old code called stats.capture() even when everything was skipped, which inflated capture count
+      if (stored > 0) {
         stats.capture();
         if (cfg.enableStats) {
           const details = [];
@@ -1193,6 +1234,14 @@ const plugin = {
           if (skippedRateLimit > 0) details.push(`${skippedRateLimit} rate limited`);
           api.logger.info(`memory-claw: Processed messages - ${details.join(", ")}`);
         }
+      } else if (cfg.enableStats) {
+        // Log that nothing was stored
+        const details = [];
+        if (skippedLowImportance > 0) details.push(`${skippedLowImportance} low importance`);
+        if (skippedNoTrigger > 0) details.push(`${skippedNoTrigger} no trigger/pattern`);
+        if (skippedDuplicate > 0) details.push(`${skippedDuplicate} duplicates`);
+        if (skippedRateLimit > 0) details.push(`${skippedRateLimit} rate limited`);
+        api.logger.info(`memory-claw: No messages stored - ${details.length > 0 ? details.join(", ") : "all filtered"}`);
       }
     };
 
