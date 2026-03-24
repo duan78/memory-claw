@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Memory Claw v2.4.18 - Fix/Regenerate Embeddings
+ * Memory Claw v2.4.20 - Fix/Regenerate Embeddings
+ *
+ * v2.4.20 improvements:
+ * - FIXED: Config path now looks in openclaw.json instead of config.json
+ * - FIXED: Uses update() method instead of delete+add to prevent data loss
+ * - FIXED: Fallback to delete+add if update fails (for schema compatibility)
  *
  * This script:
  * 1. Regenerates embeddings for ALL rows or only broken rows (with --force flag)
@@ -29,11 +34,12 @@ const DRY_RUN = args.includes("--dry-run");
 let API_KEY = process.env.MISTRAL_API_KEY;
 if (!API_KEY) {
   try {
-    const configPath = "/root/.openclaw/config.json";
+    // Try openclaw.json first (newer OpenClaw versions)
+    const configPath = "/root/.openclaw/openclaw.json";
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     API_KEY = config.plugins?.entries?.["memory-claw"]?.config?.embedding?.apiKey;
   } catch (e) {
-    console.error("Could not load API key from config");
+    console.error("Could not load API key from config:", e.message);
   }
 }
 
@@ -163,7 +169,8 @@ async function fixEmbeddings() {
 
   for (let i = 0; i < results.length; i++) {
     const row = results[i];
-    const hasValidVector = row.vector && Array.isArray(row.vector) && row.vector.length > 0;
+    // LanceDB vectors are objects, not plain arrays - check for length instead
+    const hasValidVector = row.vector && typeof row.vector.length === 'number' && row.vector.length > 0;
     const originalText = row.text || "";
 
     // Check if text needs cleaning
@@ -191,27 +198,42 @@ async function fixEmbeddings() {
           const vector = await generateEmbedding(textToEmbed);
           console.log(`    Generated vector: ${vector.length}D`);
 
-          // Delete old row and insert new one
-          await table.delete(`id = '${row.id}'`);
+          // Use update instead of delete+add to avoid schema issues
+          try {
+            await table.update({
+              where: `id = '${row.id}'`,
+              values: {
+                text: textToEmbed,
+                vector: vector,
+                updatedAt: Date.now()
+              }
+            });
+            fixed++;
+            console.log(`    ✓ Fixed row ${row.id.slice(0, 8)}`);
+          } catch (updateError) {
+            // If update fails, try delete+add as fallback
+            console.warn(`    Update failed, trying delete+add: ${updateError.message}`);
+            await table.delete(`id = '${row.id}'`);
 
-          const newEntry = {
-            id: row.id,
-            text: textToEmbed,
-            vector: vector,
-            importance: row.importance || 0.5,
-            category: row.category || "fact",
-            tier: row.tier || "episodic",
-            tags: row.tags || [],
-            createdAt: row.createdAt || Date.now(),
-            updatedAt: Date.now(),
-            lastAccessed: row.lastAccessed || Date.now(),
-            source: row.source || "agent_end",
-            hitCount: row.hitCount || 0,
-          };
+            const newEntry = {
+              id: row.id,
+              text: textToEmbed,
+              vector: vector,
+              importance: row.importance || 0.5,
+              category: row.category || "fact",
+              tier: row.tier || "episodic",
+              tags: row.tags || [],
+              createdAt: row.createdAt || Date.now(),
+              updatedAt: Date.now(),
+              lastAccessed: row.lastAccessed || Date.now(),
+              source: row.source || "agent_end",
+              hitCount: row.hitCount || 0,
+            };
 
-          await table.add([newEntry]);
-          fixed++;
-          console.log(`    ✓ Fixed row ${row.id.slice(0, 8)}`);
+            await table.add([newEntry]);
+            fixed++;
+            console.log(`    ✓ Fixed row ${row.id.slice(0, 8)} (via delete+add)`);
+          }
         } else {
           console.log(`    [DRY RUN] Would fix this row`);
           fixed++;
