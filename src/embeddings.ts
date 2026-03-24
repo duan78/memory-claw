@@ -1,47 +1,21 @@
 /**
- * Memory Claw v2.4.21 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.24 - Embeddings Client with LRU Cache
+ *
+ * v2.4.24 improvements:
+ * - Enhanced embed() to use cleanSenderMetadata for consistent metadata cleaning
+ * - Improved capture quality by ensuring embeddings always use cleaned text
+ * - Better integration with shared text utilities
  *
  * v2.4.21 improvements:
  * - Fixed mclaw_store to embed cleaned text instead of original (critical bug)
  * - Enhanced metadata cleaning patterns with more system artifacts
  * - Improved vector detection for LanceDB FixedSizeList format
  *
- * v2.4.19 improvements:
- * - Fixed metadata cleaning across all storage paths
- *
- * v2.4.18 improvements:
- * - Enhanced metadata cleaning patterns for fix-embeddings script
- *
- * v2.4.16 improvements:
- * - CRITICAL FIX: Z.AI endpoint auto-correction - api.z.ai/v1/embeddings returns 404
- * - Automatically redirects Z.AI baseUrl to Mistral official API (api.mistral.ai/v1)
- *
- * v2.4.14 improvements:
- * - CRITICAL FIX: Use native fetch instead of OpenAI library to avoid dimension bug
- * - CRITICAL FIX: mistral-embed returns 1024 dimensions (verified via API)
- *
- * v2.4.9 improvements:
- * - CRITICAL FIX: Corrected default vector dimension for mistral-embed (256 not 1024)
- * - Improved dimension detection with proper fallback
- *
- * v2.4.7 improvements:
- * - Fixed dimensions parameter condition
- * - Improved vector dimension fallback
- *
- * v2.4.6 improvements:
- * - Improved hash function to reduce collision risk
- * - Better cache key generation with FNV-1a algorithm
- *
- * v2.4.0 improvements:
- * - LRU cache with TTL (1 hour) to avoid redundant API calls
- * - Max 1000 cache entries
- * - Cache statistics for monitoring
- *
- * @version 2.4.21
+ * @version 2.4.24
  * @author duan78
  */
 
-import { normalizeText } from "./utils/text.js";
+import { normalizeText, cleanSenderMetadata } from "./utils/text.js";
 
 interface CacheEntry {
   vector: number[];
@@ -101,7 +75,9 @@ export class Embeddings {
   }
 
   async embed(text: string): Promise<number[]> {
-    const normalizedText = normalizeText(text);
+    // v2.4.24: Clean metadata first, then normalize for consistent embedding quality
+    const cleanedText = cleanSenderMetadata(text);
+    const normalizedText = normalizeText(cleanedText);
     const hash = this.hashText(normalizedText);
 
     // Check cache

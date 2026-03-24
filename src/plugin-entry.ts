@@ -5,6 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.24: SHARED METADATA CLEANING + IMPROVED CAPTURE QUALITY
+ * - FIXED: Created shared cleanSenderMetadata utility in text.ts for consistency
+ * - FIXED: Eliminated code duplication between plugin-entry.ts and fix-embeddings.js
+ * - IMPROVED: Enhanced embeddings.embed() to use metadata cleaning for better quality
+ * - IMPROVED: Better text normalization with comprehensive metadata removal
+ * - IMPROVED: All embeddings now generated from consistently cleaned text
+ * - REGENERATED: All embeddings regenerated with force option for cleanliness
+ *
  * v2.4.23: CRITICAL CAPTURE BUG FIX
  * - FIXED: stats.capture() was being called even when nothing was stored
  * - FIXED: Added comprehensive debugging to diagnose capture issues
@@ -145,7 +153,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.23
+ * @version 2.4.24
  * @author duan78
  */
 
@@ -165,6 +173,7 @@ import { Embeddings } from "./embeddings.js";
 import { RateLimiter, TierManager, StatsTracker } from "./classes/index.js";
 import {
   normalizeText,
+  cleanSenderMetadata,
   calculateTextSimilarity,
   escapeForPrompt,
   calculateImportance,
@@ -373,105 +382,6 @@ function filterJsonMetadata(text: string): string {
   return filteredLines.join("\n").trim();
 }
 
-/**
- * v2.4.21: Enhanced sender metadata cleaning
- * Removes "Sender (untrusted metadata)" prefixes and other noise from content
- *
- * v2.4.21 improvements:
- * - Added more comprehensive timestamp patterns
- * - Added system message prefix patterns
- * - Added tool call artifact patterns
- * - Improved metadata header detection
- * - Added JSON metadata pattern removal
- * - Added instruction tag filtering
- * - FIXED: Better handling of JSON metadata blocks with ```json wrapper (regardless of position)
- */
-function cleanSenderMetadata(text: string): string {
-  if (!text || typeof text !== "string") return text;
-
-  // Remove sender metadata prefixes at the start of text
-  const patterns = [
-    // v2.4.21: FIXED patterns to match entire metadata blocks regardless of position
-    // These patterns match the full metadata blocks with ```json wrapper
-    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```json[^`]*```/gi,
-
-    // Also match without json identifier
-    /(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```/gi,
-
-    // v2.4.21: More aggressive patterns to catch JSON metadata blocks
-    /^(Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*```[^`]*```.*$/gim,
-
-    // v2.4.21: FIX for inline JSON after "Sender (untrusted metadata):"
-    // Matches: "Sender (untrusted metadata): {...}" where {...} is any JSON object
-    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[^}]*\}\s*/gim,
-
-    // v2.4.21: FIX for multi-line JSON objects after "Sender (untrusted metadata):"
-    // Matches JSON objects that span multiple lines
-    /^(?:Sender|Conversation\s*info)\s*\(untrusted\s*metadata\):\s*\{[\s\S]*?\n\}\s*/gim,
-
-    // v2.4.21: FIX for simple "Sender:" prefix with inline JSON
-    /^Sender\s*:\s*\{[^}]*\}\s*/gim,
-
-    // v2.4.21: FIX for "Sender:" or "Sender (untrusted):" followed by any text until newline
-    /^(?:Sender\s*\(untrusted\)|Sender)\s*:\s*.+\n?/gim,
-
-    // Enhanced timestamp patterns - catch more variations
-    /^\[\w+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+[^\]]+\]\s*/g, // [Mon 2026-03-23 15:52 GMT+1]
-    /^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\]\s*/g, // [2026-03-23 15:52:30]
-    /^\[\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}\s+\w+\]\s*/g, // [03/23/2026 15:52 GMT]
-    /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]+\s*/g, // 2026-03-23 15:52:30 GMT
-
-    // System message prefixes
-    /^System\s*:\s*/gi,
-    /^Assistant\s*:\s*/gi,
-    /^User\s*:\s*/gi,
-    /^Tool\s*:\s*/gi,
-    /^Function\s*:\s*/gi,
-
-    // Tool call artifacts
-    /^Tool\s+Call\s*:\s*/gi,
-    /^Function\s+Call\s*:\s*/gi,
-    /^Result\s*:\s*/gi,
-    /^Error\s*:\s*/gi,
-
-    // Additional metadata headers
-    /^From\s*:\s*.+$/m, // From: someone
-    /^To\s*:\s*.+$/m, // To: someone
-    /^Subject\s*:\s*.+$/m, // Subject: something
-    /^Date\s*:\s*.+$/m, // Date: something
-    /^Message-ID\s*:\s*.+$/m, // Message-ID: xxx
-
-    // Sender/recipient patterns
-    /^Sender\s*:\s*\{\s*\}/gim,
-    /^From\s*\(untrusted\)/gim,
-
-    // Empty metadata objects
-    /^\{\s*\}\s*/g,
-
-    // v2.4.21: Additional patterns for system artifacts
-    /^\[INST\]/gi,
-    /^\[\/INST\]/gi,
-    /^\[SYSTEM\]/gi,
-    /^<\|.*?\|>/g,
-    /<instruction[^>]*>/gi,
-    /<system[^>]*>/gi,
-    /<prompt[^>]*>/gi,
-
-    // v2.4.21: JSON metadata patterns
-    /^\s*\{\s*"role"\s*:\s*"tool"/gi,
-    /^\s*\{\s*"role"\s*:\s*"system"/gi,
-    /^\s*\{\s*"tool_call_id"/gi,
-    /^\s*\{\s*"function"/gi,
-  ];
-
-  let cleaned = text;
-  for (const pattern of patterns) {
-    cleaned = cleaned.replace(pattern, "");
-  }
-
-  return cleaned.trim();
-}
-
 function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
   console.log("[memory-claw DEBUG] groupConsecutiveUserMessages called with", messages.length, "messages");
   const groups: GroupedMessage[] = [];
@@ -618,7 +528,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.23: Fixed capture bug - stats now only count actual storage. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.24: Shared metadata cleaning + improved capture quality. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -672,7 +582,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.23: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.24: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
