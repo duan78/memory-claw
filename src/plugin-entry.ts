@@ -1136,6 +1136,21 @@ const plugin = {
 
     api.logger.info("memory-claw: message_sent hook registered successfully (agent_end workaround)");
 
+    // ========================================================================
+    // Hook: message_received - Test if this event fires
+    // ========================================================================
+
+    api.logger.info("memory-claw: Registering message_received hook (TEST)...");
+    api.on("message_received", async (event, ctx) => {
+      try {
+        api.logger.info(`🎉 [TEST] memory-claw: message_received hook FIRED! Event type: ${typeof event}`);
+      } catch (err) {
+        api.logger.warn(`memory-claw: message_received test failed: ${String(err)}`);
+      }
+    });
+
+    api.logger.info("memory-claw: message_received hook registered successfully (TEST)");
+
 
     // ========================================================================
     // Service Registration with Cleanup
