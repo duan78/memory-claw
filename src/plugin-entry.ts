@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
+ * - FIXED: Removed all DEBUG logging statements from production code
+ * - FIXED: Fixed misleading vector dimension comment (1024 is correct for mistral-embed)
+ * - FIXED: Cleaned up console.log statements in processMessages and groupConsecutiveUserMessages
+ * - FIXED: Removed DEBUG logging from agent_end hook
+ * - IMPROVED: Production code is now cleaner and more professional
+ *
  * v2.4.28: CRITICAL BUG FIX - GC DELETING CAPTURED MEMORIES
  * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) config options
  * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
@@ -40,7 +47,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.28
+ * @version 2.4.29
  * @author duan78
  */
 
@@ -270,7 +277,6 @@ function filterJsonMetadata(text: string): string {
 }
 
 function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
-  console.log("[memory-claw DEBUG] groupConsecutiveUserMessages called with", messages.length, "messages");
   const groups: GroupedMessage[] = [];
   let currentGroup: string[] = [];
   let currentTimestamps: number[] = [];
@@ -278,14 +284,12 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (!msg || typeof msg !== "object") {
-      console.log("[memory-claw DEBUG] Message", i, "skipped: not an object");
       continue;
     }
     const msgObj = msg as Record<string, unknown>;
 
     // v2.4.12: Improved role check - handle both 'user' and lowercase 'user'
     const role = msgObj.role;
-    console.log("[memory-claw DEBUG] Message", i, "role:", role);
     if (role !== "user") {
       if (currentGroup.length > 0) {
         groups.push({
@@ -383,11 +387,6 @@ function groupConsecutiveUserMessages(messages: unknown[]): GroupedMessage[] {
     });
   }
 
-  console.log("[memory-claw DEBUG] Returning", groups.length, "groups");
-  for (let i = 0; i < groups.length; i++) {
-    console.log("[memory-claw DEBUG] Group", i, "text length:", groups[i].combinedText.length, "messages:", groups[i].messageCount);
-  }
-
   return groups;
 }
 
@@ -415,7 +414,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.27: Enhanced metadata cleaning with comprehensive patterns, improved capture quality. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.29: Production cleanup - removed DEBUG logging, fixed comments, improved code quality. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -449,7 +448,7 @@ const plugin = {
 
     const dbPath = cfg.dbPath || DEFAULT_DB_PATH;
     // CRITICAL FIX: Detect correct vector dimension from model
-    // mistral-embed = 256, NOT 1024 (confirmed via API test)
+    // mistral-embed returns 1024 dimensions (verified via API)
     const model = embedding.model || "mistral-embed";
     let vectorDim = embedding.dimensions;
     if (!vectorDim) {
@@ -889,10 +888,7 @@ const plugin = {
     // ========================================================================
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
-      console.log("[memory-claw DEBUG] processMessages called with", messages.length, "messages");
-
       const grouped = groupConsecutiveUserMessages(messages);
-      console.log("[memory-claw DEBUG] Grouped into", grouped.length, "groups");
 
       if (grouped.length === 0) {
         if (cfg.enableStats) {
@@ -915,8 +911,6 @@ const plugin = {
 
       for (const group of grouped) {
         const { combinedText, messageCount } = group;
-        console.log("[memory-claw DEBUG] Processing group with", messageCount, "messages, text length:", combinedText.length);
-        console.log("[memory-claw DEBUG] Text preview:", combinedText.slice(0, 100).replace(/\n/g, " "));
 
         try {
           const captureResult = shouldCapture(
@@ -927,8 +921,6 @@ const plugin = {
             source,
             cfg.minCaptureImportance || 0.25  // v2.4.17: Lowered from 0.30 to 0.25 for better capture rate
           );
-
-          console.log("[memory-claw DEBUG] shouldCapture returned:", captureResult);
 
           // v2.4.15: DEBUG - Log why messages are being filtered
           if (cfg.enableStats) {
@@ -961,29 +953,23 @@ const plugin = {
           }
 
           const category = detectCategory(combinedText);
-          console.log("[memory-claw DEBUG] Category detected:", category);
 
           // v2.4.25: Explicit metadata cleaning before embedding for maximum quality
           // Note: embeddings.embed() also cleans, but this ensures consistency
           const textForEmbedding = cleanSenderMetadata(combinedText);
-          console.log("[memory-claw DEBUG] Calling embeddings.embed...");
           const vector = await embeddings.embed(textForEmbedding);
-          console.log("[memory-claw DEBUG] Embedding succeeded, vector dimension:", vector.length);
 
           // DEBUG: Log vector dimension to diagnose silent failures
           if (cfg.enableStats) {
             api.logger.info(`memory-claw: Embedding vector dimension: ${vector.length}D`);
           }
 
-          console.log("[memory-claw DEBUG] Searching for duplicates...");
           const vectorMatches = await db.search(vector, 3, 0.90, false);
-          console.log("[memory-claw DEBUG] Found", vectorMatches.length, "potential duplicates");
 
           let isDuplicate = false;
           for (const match of vectorMatches) {
             if (calculateTextSimilarity(combinedText, match.text) > 0.85) {
               isDuplicate = true;
-              console.log("[memory-claw DEBUG] Duplicate detected, similarity:", calculateTextSimilarity(combinedText, match.text));
               break;
             }
           }
@@ -994,9 +980,7 @@ const plugin = {
           }
 
           const determinedTier = tierManager.determineTier(captureResult.importance, category, source);
-          console.log("[memory-claw DEBUG] Tier determined:", determinedTier);
 
-          console.log("[memory-claw DEBUG] Calling db.store...");
           // v2.4.25: Store the cleaned text (same as used for embedding)
           await db.store({
             text: normalizeText(textForEmbedding),
@@ -1006,12 +990,9 @@ const plugin = {
             source,
             tier: determinedTier,
           });
-          console.log("[memory-claw DEBUG] db.store succeeded!");
           rateLimiter.recordCapture();
           stored++;
-          console.log("[memory-claw DEBUG] Stored count now:", stored);
         } catch (error) {
-          console.error("[memory-claw DEBUG] Error in processMessages loop:", error);
           stats.error("processMessages", error instanceof Error ? error.message : String(error));
           console.error("memory-claw: Error processing message:", error);
           if (error instanceof Error && error.stack) {
@@ -1019,8 +1000,6 @@ const plugin = {
           }
         }
       }
-
-      console.log("[memory-claw DEBUG] Final counts - stored:", stored, "skippedLowImportance:", skippedLowImportance, "skippedNoTrigger:", skippedNoTrigger, "skippedDuplicate:", skippedDuplicate, "skippedRateLimit:", skippedRateLimit);
 
       // v2.4.23 FIX: Only call stats.capture() when we actually store something
       // The old code called stats.capture() even when everything was skipped, which inflated capture count
@@ -1047,24 +1026,10 @@ const plugin = {
     };
 
     api.on("agent_end", async (event) => {
-      // v2.4.12 FIX: Added DEBUG logging to diagnose capture issues
       if (!event) return;
 
       const messages = (event as Record<string, unknown>).messages;
       if (!messages || !Array.isArray(messages)) return;
-
-      // DEBUG: Log event structure to diagnose capture issues
-      try {
-        const eventPreview = JSON.stringify(event).slice(0, 800);
-        console.log(`memory-claw [DEBUG] agent_end event: ${eventPreview}`);
-        console.log(`memory-claw [DEBUG] messages count: ${messages.length}`);
-        if (messages.length > 0) {
-          const firstMsg = messages[0];
-          console.log(`memory-claw [DEBUG] first message:`, JSON.stringify(firstMsg).slice(0, 300));
-        }
-      } catch (e) {
-        // Ignore JSON stringify errors
-      }
 
       try {
         await processMessages(messages);

@@ -1,11 +1,14 @@
 /**
- * Memory Claw v2.4.28 - Configuration Constants
+ * Memory Claw v2.4.29 - Configuration Constants
+ *
+ * v2.4.29 improvements:
+ * - No changes to config (version bump for code cleanup)
  *
  * v2.4.28 improvements:
  * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) to DEFAULT_CONFIG
  * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
  *
- * @version 2.4.28
+ * @version 2.4.29
  * @author duan78
  */
 
