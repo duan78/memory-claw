@@ -1,7 +1,11 @@
 /**
- * Memory Claw v2.4.0 - Configuration Constants
+ * Memory Claw v2.4.28 - Configuration Constants
  *
- * @version 2.4.0
+ * v2.4.28 improvements:
+ * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) to DEFAULT_CONFIG
+ * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
+ *
+ * @version 2.4.28
  * @author duan78
  */
 
@@ -43,6 +47,8 @@ export const DEFAULT_CONFIG: Omit<FrenchMemoryConfig, "embedding"> = {
   enableStats: true,
   gcInterval: 86400000, // 24 hours
   gcMaxAge: 2592000000, // 30 days
+  gcMinImportance: 0.2, // v2.4.28: FIXED - Was 0.5, causing captured memories (0.25+) to be deleted
+  gcMinHitCount: 1, // v2.4.28: FIXED - Was 3, causing new memories to be deleted before getting hits
   rateLimitMaxPerHour: 10,
   enableWeightedRecall: true,
   enableDynamicImportance: true,

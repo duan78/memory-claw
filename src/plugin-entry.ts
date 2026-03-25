@@ -5,6 +5,14 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.28: CRITICAL BUG FIX - GC DELETING CAPTURED MEMORIES
+ * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) config options
+ * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
+ * - FIXED: Changed GC minImportance from 0.5 to 0.2 (was deleting captured memories)
+ * - FIXED: Changed GC minHitCount from 3 to 1 (was deleting new memories)
+ * - FIXED: Delayed initial GC from 60s to 10 minutes (allow memories to accumulate hits)
+ * - FIXED: All GC calls now use config values instead of hardcoded defaults
+ *
  * v2.4.27: ENHANCED METADATA CLEANING + IMPROVED CAPTURE QUALITY
  * - FIXED: Synchronized all metadata cleaning patterns with text.ts v2.4.27
  * - FIXED: Added comprehensive multi-phase metadata cleaning approach
@@ -14,143 +22,6 @@
  * - FIXED: Added support for Claude-specific metadata formats
  * - IMPROVED: All storage paths use consistently cleaned text
  * - IMPROVED: Better capture quality with explicit metadata cleaning
- *
- * v2.4.26: AUTO-CAPTURE CLEAN TEXT FIX + IMPROVED CAPTURE QUALITY
- * - FIXED: Auto-capture storage now uses cleaned text (was using unnormalized combinedText)
- * - FIXED: Synchronized all text storage paths to use cleanSenderMetadata + normalizeText
- * - FIXED: Ensured embeddings and stored text always use consistently cleaned input
- * - IMPROVED: Better capture quality with explicit metadata cleaning in all storage paths
- * - REGENERATED: All embeddings regenerated with force option for cleanliness
- *
- * v2.4.25: SYNCHRONIZED METADATA CLEANING + ENHANCED CAPTURE QUALITY
- * - FIXED: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns
- * - FIXED: Updated fix-embeddings.js to version 2.4.25 for consistency
- * - IMPROVED: Added explicit metadata cleaning in processMessages for maximum quality
- * - IMPROVED: Ensured all embeddings generated from consistently cleaned text
- * - REGENERATED: All embeddings regenerated with force option for cleanliness
- *
- * v2.4.23: CRITICAL CAPTURE BUG FIX
- * - FIXED: stats.capture() was being called even when nothing was stored
- * - FIXED: Added comprehensive debugging to diagnose capture issues
- * - FIXED: Only increment capture stats when actual storage occurs
- * - IMPROVED: Better logging to understand why messages are filtered
- *
- * v2.4.22: CRITICAL METADATA CLEANING FIX
- * - FIXED: Inline JSON after "Sender (untrusted metadata):" now properly removed
- * - FIXED: Multi-line JSON objects now properly handled
- * - FIXED: General "Sender:" prefix pattern added
- * - TESTED: All 10 comprehensive tests passing (100% success rate)
- *
- * v2.4.21: CRITICAL EMBEDDING BUG FIX + CAPTURE QUALITY IMPROVEMENTS
- * - FIXED: mclaw_store now embeds cleaned text instead of original (was causing search/index mismatch)
- * - FIXED: All duplicate checks now use cleaned text for consistency
- * - IMPROVED: Enhanced metadata cleaning with more patterns for system artifacts
- * - IMPROVED: Better JSON metadata detection with edge case handling
- * - IMPROVED: Enhanced fix-embeddings script with vector detection improvements
- *
- * v2.4.19: METADATA CLEANING BUG FIXES
- * - FIXED: Manual storage (mclaw_store) now cleans metadata before storing
- * - FIXED: Import function (mclaw_import) now cleans metadata from imported memories
- * - FIXED: All text storage paths now consistently use cleanSenderMetadata()
- * - IMPROVED: Ensured metadata removal across all storage methods
- *
- * v2.4.18: ENHANCED METADATA CLEANING & IMPROVED FIX-EMBEDDINGS SCRIPT
- * - ENHANCED: Added more comprehensive timestamp patterns (ISO format, US format, etc.)
- * - ENHANCED: Added system message prefix patterns (System:, Assistant:, User:, Tool:, Function:)
- * - ENHANCED: Added tool call artifact patterns (Tool Call:, Function Call:, Result:, Error:)
- * - ENHANCED: Added additional metadata headers (From:, To:, Subject:, Date:, Message-ID:)
- * - ENHANCED: Added empty metadata object filtering
- * - ENHANCED: Improved fix-embeddings.js script with --force, --dry-run, retry logic, and progress indicators
- *
- * v2.4.17: SENDER METADATA CLEANUP & IMPORTANCE THRESHOLD FIX
- * - FIXED: Added cleanSenderMetadata() function to remove "Sender (untrusted metadata)" prefixes
- * - FIXED: Enhanced groupConsecutiveUserMessages to call cleanSenderMetadata on all extracted text
- * - FIXED: Lowered minCaptureImportance from 0.30 to 0.25 (config default 0.45→0.25)
- * - FIXED: Better capture rate for factual content without spam triggers
- * - FIXED: Updated all threshold references consistently across codebase
- *
- * v2.4.16: Z.AI ENDPOINT FIX
- * - FIXED: Auto-correct Z.AI baseUrl to Mistral official API (api.z.ai/v1/embeddings = 404)
- * - Z.AI API keys now automatically use https://api.mistral.ai/v1 endpoint
- *
- * v2.4.15: ENHANCED CONTENT FILTERING
- * - FIXED: Filter out JSON metadata blocks from captured content
- * - FIXED: Extract only real user/assistant text from agent_end messages
- * - FIXED: Improved shouldCapture() to filter JSON blocks and tool results
- * - FIXED: Added 30-character minimum length enforcement
- * - FIXED: Enhanced metadata header detection (sender, from, date, etc.)
- * - FIXED: Filter out system messages and tool call results that are just code
- *
- * v2.4.14: CRITICAL FIX - SILENT STORE FAILURE
- * - FIXED: Replaced OpenAI library with native fetch to avoid dimension bug
- * - FIXED: OpenAI library was returning 256D with zeros instead of 1024D
- * - FIXED: Added debug logging for vector dimension in processMessages
- * - FIXED: Updated embeddings.ts fallback to use 1024D for mistral-embed
- * - ROOT CAUSE: OpenAI library adds encoding_format: base64 causing malformed responses
- *
- * v2.4.12: PRODUCTION CAPTURE FIX
- * - FIXED: Added DEBUG logging to diagnose production capture issues
- * - FIXED: Lowered minCaptureImportance from 0.45 to 0.30 for better capture rate
- * - FIXED: Relaxed aggressive skip patterns that blocked legitimate Telegram conversations
- * - FIXED: Improved groupConsecutiveUserMessages to extract content from OpenAI format messages
- * - FIXED: Better handling of array content format in messages
- *
- * v2.4.11: AUTO-MIGRATION BUG FIX
- * - FIXED: Vector dimension auto-migration now correctly uses type.listSize
- * - Previous version used dtype.size which doesn't exist in LanceDB schema
- *
- * v2.4.9: CRITICAL BUG FIXES
- * - FIXED: Corrected mistral-embed vector dimension (256 not 1024)
- * - FIXED: Updated dimension detection logic for all models
- * - FIXED: Version consistency across all files
- *
- * v2.4.7: Bug Fixes & Performance Improvements
- * - FIXED: Reversed condition for embeddings dimensions parameter
- * - FIXED: Division by zero risk in word overlap calculation
- * - FIXED: RegExp global flag causing state issues in loops
- * - FIXED: Improved vector dimension fallback validation
- * - OPTIMIZED: Batch hit count queries using single OR clause
- *
- * v2.4.6: Production Release & Optimizations
- * - FIXED: Version consistency (package.json now matches code)
- * - FIXED: Removed DEBUG logging from production build
- * - FIXED: Restored proper capture thresholds (importance >= 0.45, chars >= 50)
- * - OPTIMIZED: Improved hash function to reduce cache collisions
- * - OPTIMIZED: Better batch query performance
- * - FIXED: Removed broken test script reference
- *
- * v2.4.4: Critical Bug Fixes
- * - FIXED: Removed double importance filter that was blocking captures
- * - FIXED: Removed event.success requirement in agent_end hook
- * - FIXED: Added detailed error logging with stack traces
- * - FIXED: Improved stats persistence with immediate flush on capture
- * - FIXED: TypeScript compilation errors (locales/index.ts created)
- * - IMPROVED: Better capture logging with skip reasons breakdown
- *
- * v2.4.3: Bug Fixes & Performance Improvements
- * - Fixed low capture rate: relaxed trigger requirements (now optional, just boosts importance)
- * - Added LanceDB compaction to reduce transaction file bloat (432→ files)
- * - Optimized batch hit count updates to reduce transaction creation
- * - Improved error logging and monitoring
- * - Added database statistics endpoint
- *
- * v2.4.2: LanceDB Schema Fix
- * - Fixed schema inference for empty tags array (use [""] instead of [])
- *
- * v2.4.1: OpenClaw Compatibility Fix
- * - Changed isMemory: true to kind: "memory" for proper memory slot detection
- * - Using api.pluginConfig for correct config access
- * - Added root index.ts entry point for OpenClaw plugin discovery
- *
- * v2.4.0: Performance & Quality Optimizations
- * - Debounced stats tracking (30s flush)
- * - LRU embedding cache (1000 entries, 1h TTL)
- * - Batch hit count updates
- * - Vector exclusion from search results
- * - Auto-promotion on recall
- * - Tier-aware GC (core memories protected)
- * - Modular code structure
- * - Fixed importance formula (50-300 char sweet spot)
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages
@@ -169,7 +40,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.27
+ * @version 2.4.28
  * @author duan78
  */
 
@@ -813,7 +684,7 @@ const plugin = {
         }),
         async execute(_toolCallId, params) {
           try {
-            const { maxAge = cfg.gcMaxAge || 2592000000, minImportance = 0.5, minHitCount = 3 } = params as { maxAge?: number; minImportance?: number; minHitCount?: number };
+            const { maxAge = cfg.gcMaxAge || 2592000000, minImportance = cfg.gcMinImportance || 0.2, minHitCount = cfg.gcMinHitCount || 1 } = params as { maxAge?: number; minImportance?: number; minHitCount?: number };
             const deleted = await db.garbageCollect(maxAge, minImportance, minHitCount);
             return { content: [{ type: "text" as const, text: `GC completed: ${deleted} memories removed. Core memories protected.` }] };
           } catch (error) {
@@ -1252,7 +1123,7 @@ const plugin = {
     if (cfg.gcInterval && cfg.gcInterval > 0) {
       gcInterval = setInterval(async () => {
         try {
-          const deleted = await db.garbageCollect(cfg.gcMaxAge || 2592000000, 0.5, 3);
+          const deleted = await db.garbageCollect(cfg.gcMaxAge || 2592000000, cfg.gcMinImportance || 0.2, cfg.gcMinHitCount || 1);
           if (deleted > 0) {
             api.logger.info(`memory-claw: GC removed ${deleted} old memories (core protected)`);
           }
@@ -1269,16 +1140,17 @@ const plugin = {
         }
       }, cfg.gcInterval);
 
+      // v2.4.28: FIXED - Delay initial GC to 10 minutes (was 60s) to allow memories to accumulate hits
       setTimeout(async () => {
         try {
-          const deleted = await db.garbageCollect(cfg.gcMaxAge || 2592000000, 0.5, 3);
+          const deleted = await db.garbageCollect(cfg.gcMaxAge || 2592000000, cfg.gcMinImportance || 0.2, cfg.gcMinHitCount || 1);
           if (deleted > 0) {
             api.logger.info(`memory-claw: Initial GC removed ${deleted} old memories`);
           }
         } catch (error) {
           api.logger.warn(`memory-claw: Initial GC failed: ${error}`);
         }
-      }, 60000);
+      }, 600000); // 10 minutes instead of 60 seconds
     }
 
     // v2.4.3: Periodic compaction to prevent transaction file bloat

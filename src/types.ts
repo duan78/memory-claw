@@ -1,7 +1,10 @@
 /**
- * Memory Claw v2.4.0 - Shared Types
+ * Memory Claw v2.4.28 - Shared Types
  *
- * @version 2.4.0
+ * v2.4.28 improvements:
+ * - Added gcMinImportance and gcMinHitCount to FrenchMemoryConfig
+ *
+ * @version 2.4.28
  * @author duan78
  */
 
@@ -73,6 +76,8 @@ export interface FrenchMemoryConfig {
   enableStats?: boolean;
   gcInterval?: number;
   gcMaxAge?: number;
+  gcMinImportance?: number; // v2.4.28: Minimum importance for GC (default: 0.2)
+  gcMinHitCount?: number; // v2.4.28: Minimum hit count for GC (default: 1)
   rateLimitMaxPerHour?: number;
   enableWeightedRecall?: boolean;
   enableDynamicImportance?: boolean;

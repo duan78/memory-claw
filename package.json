@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.27",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.27: Enhanced metadata cleaning with comprehensive patterns, improved capture quality, synchronized all storage paths to use consistently cleaned text.",
+  "version": "2.4.28",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.28: CRITICAL BUG FIX - Fixed GC deleting captured memories (gcMinImportance now 0.2, gcMinHitCount now 1, initial GC delayed to 10min).",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
