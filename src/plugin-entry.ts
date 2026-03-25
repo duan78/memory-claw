@@ -1046,23 +1046,23 @@ const plugin = {
     // Register hooks
     api.logger.info("memory-claw: Registering agent_end hook...");
     api.on("agent_end", async (event, ctx) => {
-      // DEBUG: Verify hook is being called
-      api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}, hasCtx: ${!!ctx}`);
-
-      if (!event) {
-        api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
-        return;
-      }
-
-      const messages = (event as Record<string, unknown>).messages;
-      if (!messages || !Array.isArray(messages)) {
-        api.logger.error(`❌ [DEBUG] memory-claw: messages is missing or not an array - hasMessages: ${!!messages}, type: ${typeof messages}, isArray: ${Array.isArray(messages)}`);
-        return;
-      }
-
-      api.logger.info(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
-
       try {
+        // DEBUG: Verify hook is being called
+        api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}, hasCtx: ${!!ctx}`);
+
+        if (!event) {
+          api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
+          return;
+        }
+
+        const messages = (event as Record<string, unknown>).messages;
+        if (!messages || !Array.isArray(messages)) {
+          api.logger.error(`❌ [DEBUG] memory-claw: messages is missing or not an array - hasMessages: ${!!messages}, type: ${typeof messages}, isArray: ${Array.isArray(messages)}`);
+          return;
+        }
+
+        api.logger.info(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
+
         await processMessages(messages);
       } catch (err) {
         stats.error("agent_end", err instanceof Error ? err.message : String(err));
