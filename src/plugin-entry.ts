@@ -5,6 +5,11 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.30: STATS COUNTER FIX
+ * - FIXED: stats.capture() now called once per memory stored, not once per batch
+ * - FIXED: Capture count now accurately reflects actual number of memories stored
+ * - FIXED: Resolves issue where multiple memories in single agent_end only counted as 1 capture
+ *
  * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
  * - FIXED: Removed all DEBUG logging statements from production code
  * - FIXED: Fixed misleading vector dimension comment (1024 is correct for mistral-embed)
@@ -47,7 +52,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.29
+ * @version 2.4.30
  * @author duan78
  */
 
@@ -414,7 +419,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.29: Production cleanup - removed DEBUG logging, fixed comments, improved code quality. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.30: Stats counter fix - capture count now accurately reflects actual memories stored. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -468,7 +473,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.27: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.30: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -991,6 +996,7 @@ const plugin = {
             tier: determinedTier,
           });
           rateLimiter.recordCapture();
+          stats.capture(); // v2.4.30: Call stats.capture() once per memory stored, not once per batch
           stored++;
         } catch (error) {
           stats.error("processMessages", error instanceof Error ? error.message : String(error));
@@ -1001,8 +1007,8 @@ const plugin = {
         }
       }
 
-      // v2.4.23 FIX: Only call stats.capture() when we actually store something
-      // The old code called stats.capture() even when everything was skipped, which inflated capture count
+      // v2.4.30 FIX: stats.capture() now called per-memory (above), not per-batch
+      // This ensures accurate capture count when multiple memories stored in single agent_end event
       if (stored > 0) {
         stats.capture();
         if (cfg.enableStats) {

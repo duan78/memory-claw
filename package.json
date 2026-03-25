@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.29",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.29: PRODUCTION CLEANUP - Removed all DEBUG logging, fixed misleading vector dimension comment, cleaned up production code.",
+  "version": "2.4.30",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.30: STATS COUNTER FIX - Fixed stats.capture() to count once per memory stored, not once per batch. Capture count now accurately reflects actual number of memories stored.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
