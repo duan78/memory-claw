@@ -8,7 +8,14 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(export HOME=/root)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(rm -rf ~/.openclaw/memory/memory-claw)",
+      "Bash(cp -r ~/.openclaw/memory/memory-claw-backup-256d ~/.openclaw/memory/memory-claw)",
+      "Bash(node:*)",
+      "Bash(cat:*)",
+      "Bash(tmux send-keys:*)",
+      "Bash(find ~/.openclaw -name *.log -type f)",
+      "Bash(journalctl --user -u openclaw* -n 50)"
     ]
   }
 }

@@ -893,9 +893,25 @@ const plugin = {
     // ========================================================================
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
+      console.log(`🔍 [DEBUG] memory-claw: processMessages called with ${messages.length} messages`);
+
+      // DEBUG: Log message structure to understand the format
+      if (messages.length > 0) {
+        console.log("🔍 [DEBUG] memory-claw: First message sample:", {
+          type: typeof messages[0],
+          isObject: messages[0] && typeof messages[0] === "object",
+          keys: messages[0] && typeof messages[0] === "object" ? Object.keys(messages[0] as Record<string, unknown>) : "N/A",
+          role: messages[0] && typeof messages[0] === "object" ? (messages[0] as Record<string, unknown>).role : "N/A",
+          hasContent: messages[0] && typeof messages[0] === "object" ? "content" in (messages[0] as Record<string, unknown>) : false
+        });
+      }
+
       const grouped = groupConsecutiveUserMessages(messages);
 
+      console.log(`🔍 [DEBUG] memory-claw: groupConsecutiveUserMessages returned ${grouped.length} groups`);
+
       if (grouped.length === 0) {
+        console.log("❌ [DEBUG] memory-claw: No grouped messages to process - all messages filtered!");
         if (cfg.enableStats) {
           api.logger.info("memory-claw: No grouped messages to process");
         }
@@ -1007,10 +1023,9 @@ const plugin = {
         }
       }
 
-      // v2.4.30 FIX: stats.capture() now called per-memory (above), not per-batch
+      // v2.4.30 FIX: stats.capture() is called per-memory above (line 1015)
       // This ensures accurate capture count when multiple memories stored in single agent_end event
       if (stored > 0) {
-        stats.capture();
         if (cfg.enableStats) {
           const details = [];
           if (stored > 0) details.push(`${stored} stored`);
@@ -1032,10 +1047,30 @@ const plugin = {
     };
 
     api.on("agent_end", async (event) => {
-      if (!event) return;
+      // DEBUG: Verify hook is being called
+      console.log("🔍 [DEBUG] memory-claw: agent_end hook FIRED!", {
+        hasEvent: !!event,
+        eventType: typeof event,
+        eventKeys: event ? Object.keys(event as Record<string, unknown>) : [],
+        messagesLength: (event as Record<string, unknown>)?.messages ? Array.isArray((event as Record<string, unknown>).messages) ? (event as Record<string, unknown>).messages.length : "not array" : "no messages prop"
+      });
+
+      if (!event) {
+        console.log("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
+        return;
+      }
 
       const messages = (event as Record<string, unknown>).messages;
-      if (!messages || !Array.isArray(messages)) return;
+      if (!messages || !Array.isArray(messages)) {
+        console.log("❌ [DEBUG] memory-claw: messages is missing or not an array", {
+          hasMessages: !!messages,
+          messagesType: typeof messages,
+          isArray: Array.isArray(messages)
+        });
+        return;
+      }
+
+      console.log(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
 
       try {
         await processMessages(messages);
