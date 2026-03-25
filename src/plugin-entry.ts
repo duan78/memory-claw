@@ -893,25 +893,21 @@ const plugin = {
     // ========================================================================
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
-      console.log(`🔍 [DEBUG] memory-claw: processMessages called with ${messages.length} messages`);
+      api.logger.info(`🔍 [DEBUG] memory-claw: processMessages called with ${messages.length} messages`);
 
       // DEBUG: Log message structure to understand the format
       if (messages.length > 0) {
-        console.log("🔍 [DEBUG] memory-claw: First message sample:", {
-          type: typeof messages[0],
-          isObject: messages[0] && typeof messages[0] === "object",
-          keys: messages[0] && typeof messages[0] === "object" ? Object.keys(messages[0] as Record<string, unknown>) : "N/A",
-          role: messages[0] && typeof messages[0] === "object" ? (messages[0] as Record<string, unknown>).role : "N/A",
-          hasContent: messages[0] && typeof messages[0] === "object" ? "content" in (messages[0] as Record<string, unknown>) : false
-        });
+        const firstMsg = messages[0];
+        const msgObj = firstMsg as Record<string, unknown>;
+        api.logger.info(`🔍 [DEBUG] memory-claw: First message sample - type: ${typeof firstMsg}, isObject: ${firstMsg && typeof firstMsg === "object"}, keys: ${firstMsg && typeof firstMsg === "object" ? Object.keys(msgObj).join(", ") : "N/A"}, role: ${msgObj?.role}, hasContent: ${"content" in msgObj}`);
       }
 
       const grouped = groupConsecutiveUserMessages(messages);
 
-      console.log(`🔍 [DEBUG] memory-claw: groupConsecutiveUserMessages returned ${grouped.length} groups`);
+      api.logger.info(`🔍 [DEBUG] memory-claw: groupConsecutiveUserMessages returned ${grouped.length} groups`);
 
       if (grouped.length === 0) {
-        console.log("❌ [DEBUG] memory-claw: No grouped messages to process - all messages filtered!");
+        api.logger.error("❌ [DEBUG] memory-claw: No grouped messages to process - all messages filtered!");
         if (cfg.enableStats) {
           api.logger.info("memory-claw: No grouped messages to process");
         }
@@ -1048,29 +1044,20 @@ const plugin = {
 
     api.on("agent_end", async (event) => {
       // DEBUG: Verify hook is being called
-      console.log("🔍 [DEBUG] memory-claw: agent_end hook FIRED!", {
-        hasEvent: !!event,
-        eventType: typeof event,
-        eventKeys: event ? Object.keys(event as Record<string, unknown>) : [],
-        messagesLength: (event as Record<string, unknown>)?.messages ? Array.isArray((event as Record<string, unknown>).messages) ? (event as Record<string, unknown>).messages.length : "not array" : "no messages prop"
-      });
+      api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}`);
 
       if (!event) {
-        console.log("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
+        api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
         return;
       }
 
       const messages = (event as Record<string, unknown>).messages;
       if (!messages || !Array.isArray(messages)) {
-        console.log("❌ [DEBUG] memory-claw: messages is missing or not an array", {
-          hasMessages: !!messages,
-          messagesType: typeof messages,
-          isArray: Array.isArray(messages)
-        });
+        api.logger.error(`❌ [DEBUG] memory-claw: messages is missing or not an array - hasMessages: ${!!messages}, type: ${typeof messages}, isArray: ${Array.isArray(messages)}`);
         return;
       }
 
-      console.log(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
+      api.logger.info(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
 
       try {
         await processMessages(messages);

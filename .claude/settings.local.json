@@ -15,7 +15,11 @@
       "Bash(cat:*)",
       "Bash(tmux send-keys:*)",
       "Bash(find ~/.openclaw -name *.log -type f)",
-      "Bash(journalctl --user -u openclaw* -n 50)"
+      "Bash(journalctl --user -u openclaw* -n 50)",
+      "Bash(kill -USR1 3531136)",
+      "Bash(ps -p 3531136 -o pid,cmd,etime)",
+      "Bash(tmux attach:*)",
+      "Bash(tmux new-session:*)"
     ]
   }
 }
