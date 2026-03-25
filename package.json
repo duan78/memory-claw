@@ -5,6 +5,7 @@
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
+    "build": "npx tsc --noEmit false --declaration false",
     "fix-embeddings": "node scripts/fix-embeddings.js",
     "fix-embeddings:force": "node scripts/fix-embeddings.js --force",
     "fix-embeddings:dry-run": "node scripts/fix-embeddings.js --dry-run"

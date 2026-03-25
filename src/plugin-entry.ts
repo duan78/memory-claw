@@ -1056,10 +1056,10 @@ const plugin = {
 
     // Register hooks
     api.logger.info("memory-claw: Registering agent_end hook...");
-    api.on("agent_end", async (event, ctx) => {
+    api.on("agent_end", async (event) => {
       try {
         // DEBUG: Verify hook is being called
-        api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}, hasCtx: ${!!ctx}`);
+        api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}`);
 
         if (!event) {
           api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
@@ -1092,7 +1092,7 @@ const plugin = {
     // ========================================================================
 
     api.logger.info("memory-claw: Registering session_end hook...");
-    api.on("session_end", async (event, ctx) => {
+    api.on("session_end", async (event) => {
       if (!event) return;
       const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
       if (!sessionFile || typeof sessionFile !== "string") return;
@@ -1124,7 +1124,7 @@ const plugin = {
     api.logger.info("memory-claw: Registering message_sent hook (agent_end workaround)...");
     const messageBuffer: unknown[] = [];
 
-    api.on("message_sent", async (event, ctx) => {
+    api.on("message_sent", async (event) => {
       try {
         api.logger.info(`🔍 [DEBUG] memory-claw: message_sent hook FIRED!`);
 
@@ -1152,7 +1152,7 @@ const plugin = {
     // ========================================================================
 
     api.logger.info("memory-claw: Registering message_received hook (TEST)...");
-    api.on("message_received", async (event, ctx) => {
+    api.on("message_received", async (event) => {
       try {
         api.logger.info(`🎉 [TEST] memory-claw: message_received hook FIRED! Event type: ${typeof event}`);
       } catch (err) {

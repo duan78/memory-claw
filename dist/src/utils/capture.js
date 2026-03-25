@@ -357,14 +357,22 @@ export function shouldCapture(text, minChars, maxChars, category, source = "auto
     if (suspicion > 0.5) {
         return { should: false, importance: 0.5, suspicion };
     }
-    // Skip patterns check
+    // v2.4.32: TEMPORARILY disabled skip patterns check
+    // These were blocking all messages due to role prefix matching (user:, assistant:, etc.)
+    // TODO: Re-enable with patterns that don't match role prefixes
+    /*
     if (getAllSkipPatterns().some((p) => p.test(normalized))) {
-        return { should: false, importance: 0.5, suspicion };
+      return { should: false, importance: 0.5, suspicion };
     }
-    // Low value patterns check
+    */
+    // v2.4.32: TEMPORARILY disabled low value patterns check
+    // These were blocking legitimate messages
+    // TODO: Re-enable with more specific patterns
+    /*
     if (getAllLowValuePatterns().some((p) => p.test(normalized))) {
-        return { should: false, importance: 0.5, suspicion };
+      return { should: false, importance: 0.5, suspicion };
     }
+    */
     // Calculate importance
     const detectedCategory = category || detectCategory(normalized);
     let importance = calculateImportance(normalized, detectedCategory, source);
