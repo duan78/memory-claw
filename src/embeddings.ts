@@ -108,6 +108,7 @@ export class Embeddings {
         body: JSON.stringify({
           model: this.model,
           input: normalizedText,
+          encoding_format: "float",
         }),
       });
 
