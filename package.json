@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.31",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.31: CRITICAL BUG FIX - Added comprehensive debug logging to investigate 0 captures issue. Fixed duplicate stats.capture() call. Debug logs will show when agent_end hook fires and message structure.",
+  "version": "2.4.32",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.32: CRITICAL FIX - Disabled minCaptureImportance (set to 0.0), disabled duplicate detection (set to 1.0), disabled rate limiter. This allows ALL messages to be captured for diagnosis. Gradually re-enable filters once captures are confirmed working.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

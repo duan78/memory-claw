@@ -5,10 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.31: CRITICAL BUG FIX - 0 CAPTURES INVESTIGATION
- * - ADDED: Comprehensive debug logging to agent_end hook and processMessages
- * - FIXED: Duplicate stats.capture() call (was calling twice per memory)
- * - DEBUG: Logs will show when agent_end fires, message structure, and grouping results
+ * v2.4.32: CRITICAL FIX - CAPTURE THRESHOLDS DISABLED
+ * - DISABLED: minCaptureImportance set to 0.0 (was 0.25) - allows ALL messages
+ * - DISABLED: Duplicate detection threshold set to 1.0 (was 0.85) - effectively disabled
+ * - DISABLED: Rate limiter commented out - was 10/hour limit
+ * - ADDED: Comprehensive debug logging to track capture flow
+ * - This allows ALL messages to be captured for diagnosis
+ * - TODO: Gradually re-enable filters once captures confirmed working
  * - FIXED: Resolves issue where multiple memories in single agent_end only counted as 1 capture
  *
  * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
@@ -53,7 +56,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.31
+ * @version 2.4.32
  * @author duan78
  */
 
@@ -420,7 +423,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.31: Critical bug fix - added debug logging to investigate 0 captures issue. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.32: CRITICAL FIX - Disabled all capture thresholds (importance=0.0, duplicate=1.0, rate limiter=off) to diagnose 0 captures. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -474,7 +477,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.31: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.32: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, THRESHOLDS DISABLED FOR DIAGNOSIS, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -931,20 +934,22 @@ const plugin = {
         const { combinedText, messageCount } = group;
 
         try {
+          // v2.4.31: TEMPORARILY set minCaptureImportance to 0.0 to allow ALL captures
+          // This helps diagnose if the importance threshold was blocking all captures
           const captureResult = shouldCapture(
             combinedText,
             cfg.captureMinChars || 50,
             cfg.captureMaxChars || 3000,
             undefined,
             source,
-            cfg.minCaptureImportance || 0.25  // v2.4.17: Lowered from 0.30 to 0.25 for better capture rate
+            0.0  // v2.4.31: TEMPORARY - Set to 0.0 to allow all messages (was 0.25)
           );
 
           // v2.4.15: DEBUG - Log why messages are being filtered
           if (cfg.enableStats) {
             const preview = combinedText.slice(0, 80).replace(/\n/g, " ");
             if (!captureResult.should) {
-              const reason = captureResult.importance < (cfg.minCaptureImportance || 0.25)
+              const reason = captureResult.importance < 0.0
                 ? `low importance (${captureResult.importance.toFixed(2)})`
                 : `filtered (importance: ${captureResult.importance.toFixed(2)})`;
               api.logger.info(`memory-claw: SKIPPED [${reason}]: "${preview}..."`);
@@ -954,7 +959,7 @@ const plugin = {
           }
 
           if (!captureResult.should) {
-            if (captureResult.importance > 0 && captureResult.importance < (cfg.minCaptureImportance || 0.25)) {  // v2.4.17: Lowered from 0.30 to 0.25
+            if (captureResult.importance > 0 && captureResult.importance < 0.0) {  // v2.4.31: TEMPORARY - Set to 0.0
               skippedLowImportance++;
             } else {
               skippedNoTrigger++;
@@ -962,6 +967,9 @@ const plugin = {
             continue;
           }
 
+          // v2.4.31: TEMPORARILY disable rate limiter to diagnose capture issues
+          // Rate limiter was set to 10/hour, which might be blocking captures
+          /*
           if (!rateLimiter.canCapture(captureResult.importance)) {
             skippedRateLimit++;
             if (cfg.enableStats) {
@@ -969,6 +977,7 @@ const plugin = {
             }
             continue;
           }
+          */
 
           const category = detectCategory(combinedText);
 
@@ -984,9 +993,11 @@ const plugin = {
 
           const vectorMatches = await db.search(vector, 3, 0.90, false);
 
+          // v2.4.31: TEMPORARILY disable duplicate detection to diagnose capture issues
+          // Changed threshold from 0.85 to 1.0 (requires 100% similarity to mark as duplicate)
           let isDuplicate = false;
           for (const match of vectorMatches) {
-            if (calculateTextSimilarity(combinedText, match.text) > 0.85) {
+            if (calculateTextSimilarity(combinedText, match.text) > 1.0) {  // v2.4.31: TEMPORARY - was 0.85
               isDuplicate = true;
               break;
             }
