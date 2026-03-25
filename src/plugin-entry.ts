@@ -1043,6 +1043,8 @@ const plugin = {
       }
     };
 
+    // Register hooks
+    api.logger.info("memory-claw: Registering agent_end hook...");
     api.on("agent_end", async (event, ctx) => {
       // DEBUG: Verify hook is being called
       api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}, hasCtx: ${!!ctx}`);
@@ -1072,10 +1074,13 @@ const plugin = {
       }
     });
 
+    api.logger.info("memory-claw: agent_end hook registered successfully");
+
     // ========================================================================
     // Hook: session_end - Crash/kill recovery
     // ========================================================================
 
+    api.logger.info("memory-claw: Registering session_end hook...");
     api.on("session_end", async (event, ctx) => {
       if (!event) return;
       const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
@@ -1096,6 +1101,8 @@ const plugin = {
         api.logger.warn(`memory-claw: Session end capture failed: ${String(err)}`);
       }
     });
+
+    api.logger.info("memory-claw: session_end hook registered successfully");
 
     // ========================================================================
     // Service Registration with Cleanup
