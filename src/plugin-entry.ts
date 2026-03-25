@@ -5,9 +5,10 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.30: STATS COUNTER FIX
- * - FIXED: stats.capture() now called once per memory stored, not once per batch
- * - FIXED: Capture count now accurately reflects actual number of memories stored
+ * v2.4.31: CRITICAL BUG FIX - 0 CAPTURES INVESTIGATION
+ * - ADDED: Comprehensive debug logging to agent_end hook and processMessages
+ * - FIXED: Duplicate stats.capture() call (was calling twice per memory)
+ * - DEBUG: Logs will show when agent_end fires, message structure, and grouping results
  * - FIXED: Resolves issue where multiple memories in single agent_end only counted as 1 capture
  *
  * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
@@ -52,7 +53,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.30
+ * @version 2.4.31
  * @author duan78
  */
 
@@ -419,7 +420,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.30: Stats counter fix - capture count now accurately reflects actual memories stored. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.31: Critical bug fix - added debug logging to investigate 0 captures issue. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -473,7 +474,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.30: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
+      `memory-claw v2.4.31: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, rateLimit: ${cfg.rateLimitMaxPerHour || 10}/hour, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
