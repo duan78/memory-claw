@@ -1105,6 +1105,39 @@ const plugin = {
     api.logger.info("memory-claw: session_end hook registered successfully");
 
     // ========================================================================
+    // Hook: message_sent - Alternative to agent_end (WORKAROUND)
+    // ========================================================================
+    // NOTE: agent_end event appears to not be fired in current OpenClaw version
+    // Using message_sent as a workaround to capture messages after they're sent
+
+    api.logger.info("memory-claw: Registering message_sent hook (agent_end workaround)...");
+    const messageBuffer: unknown[] = [];
+
+    api.on("message_sent", async (event, ctx) => {
+      try {
+        api.logger.info(`🔍 [DEBUG] memory-claw: message_sent hook FIRED!`);
+
+        // Collect messages and process periodically
+        if (event && typeof event === "object") {
+          messageBuffer.push(event);
+
+          // Process every 10 messages or when we have user messages
+          if (messageBuffer.length >= 10) {
+            api.logger.info(`🔍 [DEBUG] memory-claw: Processing ${messageBuffer.length} buffered messages`);
+            await processMessages(messageBuffer);
+            messageBuffer.length = 0; // Clear buffer
+          }
+        }
+      } catch (err) {
+        stats.error("message_sent", err instanceof Error ? err.message : String(err));
+        api.logger.warn(`memory-claw: message_sent hook failed: ${String(err)}`);
+      }
+    });
+
+    api.logger.info("memory-claw: message_sent hook registered successfully (agent_end workaround)");
+
+
+    // ========================================================================
     // Service Registration with Cleanup
     // ========================================================================
 
