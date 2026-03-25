@@ -1043,9 +1043,9 @@ const plugin = {
       }
     };
 
-    api.on("agent_end", async (event) => {
+    api.on("agent_end", async (event, ctx) => {
       // DEBUG: Verify hook is being called
-      api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}`);
+      api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}, hasCtx: ${!!ctx}`);
 
       if (!event) {
         api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
@@ -1076,7 +1076,7 @@ const plugin = {
     // Hook: session_end - Crash/kill recovery
     // ========================================================================
 
-    api.on("session_end", async (event) => {
+    api.on("session_end", async (event, ctx) => {
       if (!event) return;
       const sessionFile = (event as Record<string, unknown>).sessionFile as string | undefined;
       if (!sessionFile || typeof sessionFile !== "string") return;
