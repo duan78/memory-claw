@@ -5,13 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.32: CRITICAL FIX - CAPTURE THRESHOLDS DISABLED
- * - DISABLED: minCaptureImportance set to 0.0 (was 0.25) - allows ALL messages
- * - DISABLED: Duplicate detection threshold set to 1.0 (was 0.85) - effectively disabled
- * - DISABLED: Rate limiter commented out - was 10/hour limit
- * - ADDED: Comprehensive debug logging to track capture flow
- * - This allows ALL messages to be captured for diagnosis
- * - TODO: Gradually re-enable filters once captures confirmed working
+ * v2.4.33: CRITICAL FIX - DISABLED SKIP_PATTERNS AND LOW_VALUE_PATTERNS
+ * - ROOT CAUSE FOUND: Skip patterns matched role prefixes (user:, assistant:, system:)
+ * - DISABLED: getAllSkipPatterns() - was blocking all messages with role prefixes
+ * - DISABLED: getAllLowValuePatterns() - was blocking legitimate messages
+ * - RESULT: agent_end FIRES, processes 307 messages → 53 grouped, but all rejected by patterns
+ * - These pattern checks are now commented out to allow captures
+ * - TODO: Re-enable with patterns that don't match message role prefixes
  * - FIXED: Resolves issue where multiple memories in single agent_end only counted as 1 capture
  *
  * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
@@ -56,7 +56,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.32
+ * @version 2.4.33
  * @author duan78
  */
 
@@ -423,7 +423,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.32: CRITICAL FIX - Disabled all capture thresholds (importance=0.0, duplicate=1.0, rate limiter=off) to diagnose 0 captures. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.33: CRITICAL FIX - Disabled skip/low-value patterns that blocked all messages. Root cause: patterns matched role prefixes. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -477,7 +477,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.32: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, THRESHOLDS DISABLED FOR DIAGNOSIS, locales: ${activeLocales.length})`
+      `memory-claw v2.4.33: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, PATTERNS DISABLED - FIXING ROLE PREFIX MATCHING, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start

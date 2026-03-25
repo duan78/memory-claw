@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.32",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.32: CRITICAL FIX - Disabled minCaptureImportance (set to 0.0), disabled duplicate detection (set to 1.0), disabled rate limiter. This allows ALL messages to be captured for diagnosis. Gradually re-enable filters once captures are confirmed working.",
+  "version": "2.4.33",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.33: CRITICAL FIX - Disabled SKIP_PATTERNS and LOW_VALUE_PATTERNS that were blocking all messages due to role prefix matching (user:, assistant:, system:). Root cause found: patterns matched message prefixes, rejecting legitimate content.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

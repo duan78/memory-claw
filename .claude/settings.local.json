@@ -19,7 +19,8 @@
       "Bash(kill -USR1 3531136)",
       "Bash(ps -p 3531136 -o pid,cmd,etime)",
       "Bash(tmux attach:*)",
-      "Bash(tmux new-session:*)"
+      "Bash(tmux new-session:*)",
+      "Bash(journalctl --user -n 200 --no-pager)"
     ]
   }
 }
