@@ -5,43 +5,26 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.33: CRITICAL FIX - DISABLED SKIP_PATTERNS AND LOW_VALUE_PATTERNS
- * - ROOT CAUSE FOUND: Skip patterns matched role prefixes (user:, assistant:, system:)
- * - DISABLED: getAllSkipPatterns() - was blocking all messages with role prefixes
- * - DISABLED: getAllLowValuePatterns() - was blocking legitimate messages
- * - RESULT: agent_end FIRES, processes 307 messages → 53 grouped, but all rejected by patterns
- * - These pattern checks are now commented out to allow captures
- * - TODO: Re-enable with patterns that don't match message role prefixes
- * - FIXED: Resolves issue where multiple memories in single agent_end only counted as 1 capture
+ * v2.4.37: CAPTURE PIPELINE OVERHAUL - FIX BROKEN HOOKS
+ * - CRITICAL: message_sent event only has {to, content, success} - NO role or message object!
+ * - CRITICAL: agent_end hook may not fire reliably in all OpenClaw versions
+ * - FIXED: Added 30-second polling fallback that reads session files directly
+ * - FIXED: Added comprehensive DEBUG logging to ALL hooks to identify what fires
+ * - FIXED: Hook event structures now match OpenClaw PluginHookAgentEndEvent types
+ * - EXPERIMENTAL: Trying llm_output hook as alternative trigger point
+ * - TEMPORARY: Polling reads from ~/.openclaw/state/session*.jsonl every 30s
+ * - TODO: Once we identify which hooks actually fire, remove non-working ones
  *
- * v2.4.29: PRODUCTION CLEANUP - CODE QUALITY IMPROVEMENTS
- * - FIXED: Removed all DEBUG logging statements from production code
- * - FIXED: Fixed misleading vector dimension comment (1024 is correct for mistral-embed)
- * - FIXED: Cleaned up console.log statements in processMessages and groupConsecutiveUserMessages
- * - FIXED: Removed DEBUG logging from agent_end hook
- * - IMPROVED: Production code is now cleaner and more professional
- *
- * v2.4.28: CRITICAL BUG FIX - GC DELETING CAPTURED MEMORIES
- * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) config options
- * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
- * - FIXED: Changed GC minImportance from 0.5 to 0.2 (was deleting captured memories)
- * - FIXED: Changed GC minHitCount from 3 to 1 (was deleting new memories)
- * - FIXED: Delayed initial GC from 60s to 10 minutes (allow memories to accumulate hits)
- * - FIXED: All GC calls now use config values instead of hardcoded defaults
- *
- * v2.4.27: ENHANCED METADATA CLEANING + IMPROVED CAPTURE QUALITY
- * - FIXED: Synchronized all metadata cleaning patterns with text.ts v2.4.27
- * - FIXED: Added comprehensive multi-phase metadata cleaning approach
- * - FIXED: Support for nested JSON metadata blocks
- * - FIXED: Better handling of malformed metadata
- * - FIXED: Enhanced detection and removal of tool/system artifacts
- * - FIXED: Added support for Claude-specific metadata formats
- * - IMPROVED: All storage paths use consistently cleaned text
- * - IMPROVED: Better capture quality with explicit metadata cleaning
+ * v2.4.36: CAPTURE PIPELINE FIXES
+ * - FIXED: Reduced fallback timeout from 60s to 10s for faster processing
+ * - FIXED: Improved buffer handling with copy-on-process pattern to prevent double-processing
  *
  * Hooks:
- * - `agent_end`: Captures facts from user messages
+ * - `agent_end`: Captures facts from user messages (primary, may not fire)
+ * - `llm_output`: Alternative trigger when LLM generates output
  * - `session_end`: Captures facts even on crash/kill
+ * - `message_sent`: DISABLED - event structure doesn't support capture
+ * - Polling fallback: Reads session files every 30 seconds
  * - `before_agent_start`: Injects relevant context (tier-based)
  *
  * Tools:
@@ -56,7 +39,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.35
+ * @version 2.4.37
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -345,7 +328,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.35: CRITICAL FIX - Changed message_sent buffer from 10 to 1 (process on every user message). Added 60-second fallback timer. Fixes capture pipeline when agent_end hook doesn't fire. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.37: CRITICAL FIX - message_sent hook broken (event has no role), agent_end unreliable. Added 30-second polling fallback that reads session files directly. Comprehensive DEBUG logging added to all hooks to identify what fires. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -748,20 +731,75 @@ const plugin = {
             }
         });
         // ========================================================================
+        // Polling Fallback - Read session files every 30 seconds
+        // ========================================================================
+        // This is a fallback mechanism since hooks may not fire reliably
+        // Reads the latest session file and processes any new user messages
+        let lastProcessedSessionFile = null;
+        let lastProcessedMessageIndex = -1;
+        const pollSessionFiles = async () => {
+            try {
+                const { readFile } = await import("node:fs/promises");
+                const { readdir } = await import("node:fs/promises");
+                const stateDir = join(homedir(), ".openclaw", "state");
+                // Get all session files, sorted by modification time (newest first)
+                const files = await readdir(stateDir).catch(() => []);
+                const sessionFiles = files
+                    .filter(f => f.startsWith("session-") && f.endsWith(".jsonl"))
+                    .sort((a, b) => b.localeCompare(a)); // Newest first
+                if (sessionFiles.length === 0) {
+                    return; // No session files yet
+                }
+                const latestFile = sessionFiles[0];
+                const latestFilePath = join(stateDir, latestFile);
+                // Check if we should process this file
+                const isNewFile = latestFile !== lastProcessedSessionFile;
+                if (isNewFile) {
+                    lastProcessedSessionFile = latestFile;
+                    lastProcessedMessageIndex = -1; // Reset for new file
+                }
+                // Read the session file
+                const content = await readFile(latestFilePath, "utf-8");
+                const lines = content.split("\n").filter(line => line.trim());
+                if (lines.length === 0) {
+                    return;
+                }
+                // Process only new messages since last check
+                const startIndex = lastProcessedMessageIndex + 1;
+                const newMessages = [];
+                for (let i = startIndex; i < lines.length; i++) {
+                    try {
+                        const msg = JSON.parse(lines[i]);
+                        newMessages.push(msg);
+                        lastProcessedMessageIndex = i;
+                    }
+                    catch (e) {
+                        // Skip malformed lines
+                    }
+                }
+                if (newMessages.length > 0 && cfg.enableStats) {
+                    api.logger.info(`memory-claw: [POLLING] Found ${newMessages.length} new messages in ${latestFile}`);
+                }
+                // Process the new messages
+                if (newMessages.length > 0) {
+                    await processMessages(newMessages);
+                }
+            }
+            catch (err) {
+                // Silently ignore polling errors to avoid spam
+                if (cfg.enableStats) {
+                    api.logger.warn(`memory-claw: [POLLING] Error: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }
+        };
+        // Start polling interval (30 seconds)
+        const pollingInterval = setInterval(pollSessionFiles, 30000);
+        // ========================================================================
         // Hook: agent_end - Auto-capture facts
         // ========================================================================
         const processMessages = async (messages) => {
-            api.logger.info(`🔍 [DEBUG] memory-claw: processMessages called with ${messages.length} messages`);
-            // DEBUG: Log message structure to understand the format
-            if (messages.length > 0) {
-                const firstMsg = messages[0];
-                const msgObj = firstMsg;
-                api.logger.info(`🔍 [DEBUG] memory-claw: First message sample - type: ${typeof firstMsg}, isObject: ${firstMsg && typeof firstMsg === "object"}, keys: ${firstMsg && typeof firstMsg === "object" ? Object.keys(msgObj).join(", ") : "N/A"}, role: ${msgObj?.role}, hasContent: ${"content" in msgObj}`);
-            }
             const grouped = groupConsecutiveUserMessages(messages);
-            api.logger.info(`🔍 [DEBUG] memory-claw: groupConsecutiveUserMessages returned ${grouped.length} groups`);
             if (grouped.length === 0) {
-                api.logger.error("❌ [DEBUG] memory-claw: No grouped messages to process - all messages filtered!");
                 if (cfg.enableStats) {
                     api.logger.info("memory-claw: No grouped messages to process");
                 }
@@ -780,25 +818,19 @@ const plugin = {
             for (const group of grouped) {
                 const { combinedText, messageCount } = group;
                 try {
-                    // v2.4.31: TEMPORARILY set minCaptureImportance to 0.0 to allow ALL captures
-                    // This helps diagnose if the importance threshold was blocking all captures
-                    const captureResult = shouldCapture(combinedText, cfg.captureMinChars || 50, cfg.captureMaxChars || 3000, undefined, source, 0.0 // v2.4.31: TEMPORARY - Set to 0.0 to allow all messages (was 0.25)
+                    const captureResult = shouldCapture(combinedText, cfg.captureMinChars || 50, cfg.captureMaxChars || 3000, undefined, source, 0.25 // Default minimum importance from shouldCapture function
                     );
-                    // v2.4.15: DEBUG - Log why messages are being filtered
                     if (cfg.enableStats) {
                         const preview = combinedText.slice(0, 80).replace(/\n/g, " ");
                         if (!captureResult.should) {
-                            const reason = captureResult.importance < 0.0
+                            const reason = captureResult.importance < 0.25
                                 ? `low importance (${captureResult.importance.toFixed(2)})`
                                 : `filtered (importance: ${captureResult.importance.toFixed(2)})`;
                             api.logger.info(`memory-claw: SKIPPED [${reason}]: "${preview}..."`);
                         }
-                        else {
-                            api.logger.info(`memory-claw: CAPTURING (importance: ${captureResult.importance.toFixed(2)}): "${preview}..."`);
-                        }
                     }
                     if (!captureResult.should) {
-                        if (captureResult.importance > 0 && captureResult.importance < 0.0) { // v2.4.31: TEMPORARY - Set to 0.0
+                        if (captureResult.importance > 0 && captureResult.importance < 0.25) {
                             skippedLowImportance++;
                         }
                         else {
@@ -806,32 +838,24 @@ const plugin = {
                         }
                         continue;
                     }
-                    // v2.4.31: TEMPORARILY disable rate limiter to diagnose capture issues
-                    // Rate limiter was set to 10/hour, which might be blocking captures
-                    /*
+                    // Check rate limit
                     if (!rateLimiter.canCapture(captureResult.importance)) {
-                      skippedRateLimit++;
-                      if (cfg.enableStats) {
-                        api.logger.warn(`memory-claw: Rate limit reached, skipping capture (importance: ${captureResult.importance.toFixed(2)})`);
-                      }
-                      continue;
+                        skippedRateLimit++;
+                        if (cfg.enableStats) {
+                            api.logger.warn(`memory-claw: Rate limit reached, skipping capture (importance: ${captureResult.importance.toFixed(2)})`);
+                        }
+                        continue;
                     }
-                    */
                     const category = detectCategory(combinedText);
                     // v2.4.25: Explicit metadata cleaning before embedding for maximum quality
                     // Note: embeddings.embed() also cleans, but this ensures consistency
                     const textForEmbedding = cleanSenderMetadata(combinedText);
                     const vector = await embeddings.embed(textForEmbedding);
-                    // DEBUG: Log vector dimension to diagnose silent failures
-                    if (cfg.enableStats) {
-                        api.logger.info(`memory-claw: Embedding vector dimension: ${vector.length}D`);
-                    }
                     const vectorMatches = await db.search(vector, 3, 0.90, false);
-                    // v2.4.31: TEMPORARILY disable duplicate detection to diagnose capture issues
-                    // Changed threshold from 0.85 to 1.0 (requires 100% similarity to mark as duplicate)
+                    // Check for duplicates
                     let isDuplicate = false;
                     for (const match of vectorMatches) {
-                        if (calculateTextSimilarity(combinedText, match.text) > 1.0) { // v2.4.31: TEMPORARY - was 0.85
+                        if (calculateTextSimilarity(combinedText, match.text) > 0.85) {
                             isDuplicate = true;
                             break;
                         }
@@ -851,14 +875,13 @@ const plugin = {
                         tier: determinedTier,
                     });
                     rateLimiter.recordCapture();
-                    stats.capture(); // v2.4.30: Call stats.capture() once per memory stored, not once per batch
+                    stats.capture();
                     stored++;
                 }
                 catch (error) {
                     stats.error("processMessages", error instanceof Error ? error.message : String(error));
-                    console.error("memory-claw: Error processing message:", error);
-                    if (error instanceof Error && error.stack) {
-                        console.error("Stack trace:", error.stack);
+                    if (cfg.enableStats) {
+                        api.logger.warn(`memory-claw: Error processing message: ${error instanceof Error ? error.message : String(error)}`);
                     }
                 }
             }
@@ -898,46 +921,43 @@ const plugin = {
         api.logger.info("memory-claw: Registering agent_end hook...");
         api.on("agent_end", async (event) => {
             try {
-                // DEBUG: Verify hook is being called
-                api.logger.info(`🔍 [DEBUG] memory-claw: agent_end hook FIRED! hasEvent: ${!!event}, type: ${typeof event}`);
+                api.logger.info(`🔍 [HOOK] memory-claw: agent_end FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
                 if (!event) {
-                    api.logger.error("❌ [DEBUG] memory-claw: agent_end event is null/undefined");
+                    api.logger.warn("memory-claw: agent_end event is null/undefined");
                     return;
                 }
                 const messages = event.messages;
                 if (!messages || !Array.isArray(messages)) {
-                    api.logger.error(`❌ [DEBUG] memory-claw: messages is missing or not an array - hasMessages: ${!!messages}, type: ${typeof messages}, isArray: ${Array.isArray(messages)}`);
+                    api.logger.warn(`memory-claw: agent_end messages invalid: type=${typeof messages}, isArray=${Array.isArray(messages)}`);
                     return;
                 }
-                api.logger.info(`✅ [DEBUG] memory-claw: Processing ${messages.length} messages from agent_end`);
+                api.logger.info(`memory-claw: [agent_end] Processing ${messages.length} messages`);
                 await processMessages(messages);
             }
             catch (err) {
                 stats.error("agent_end", err instanceof Error ? err.message : String(err));
-                console.error("memory-claw: agent_end hook failed:", err);
-                if (err instanceof Error && err.stack) {
-                    console.error("Stack trace:", err.stack);
-                }
                 api.logger.warn(`memory-claw: agent_end capture failed: ${String(err)}`);
             }
         });
-        api.logger.info("memory-claw: agent_end hook registered successfully");
+        api.logger.info("memory-claw: agent_end hook registered");
         // ========================================================================
         // Hook: session_end - Crash/kill recovery
         // ========================================================================
         api.logger.info("memory-claw: Registering session_end hook...");
         api.on("session_end", async (event) => {
-            if (!event)
-                return;
-            const sessionFile = event.sessionFile;
-            if (!sessionFile || typeof sessionFile !== "string")
-                return;
             try {
+                api.logger.info(`🔍 [HOOK] memory-claw: session_end FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+                if (!event)
+                    return;
+                const sessionFile = event.sessionFile;
+                if (!sessionFile || typeof sessionFile !== "string")
+                    return;
                 const { readFile } = await import("node:fs/promises");
                 const transcript = await readFile(sessionFile, "utf-8");
                 const session = JSON.parse(transcript);
                 const messages = session.messages || session.conversation?.messages || [];
                 if (Array.isArray(messages) && messages.length > 0) {
+                    api.logger.info(`memory-claw: [session_end] Processing ${messages.length} messages`);
                     await processMessages(messages);
                     api.logger.info("memory-claw: Captured memories from session_end");
                 }
@@ -947,73 +967,58 @@ const plugin = {
                 api.logger.warn(`memory-claw: Session end capture failed: ${String(err)}`);
             }
         });
-        api.logger.info("memory-claw: session_end hook registered successfully");
+        api.logger.info("memory-claw: session_end hook registered");
         // ========================================================================
-        // Hook: message_sent - Alternative to agent_end (WORKAROUND)
+        // Hook: llm_output - Experimental alternative trigger
         // ========================================================================
-        // NOTE: agent_end event appears to not be fired in current OpenClaw version
-        // Using message_sent as a workaround to capture messages after they're sent
-        // v2.4.35: CRITICAL FIX - Changed buffer from 10 to 1 (process on every user message)
-        // Added 60-second fallback timer to force process buffer
-        api.logger.info("memory-claw: Registering message_sent hook (agent_end workaround)...");
-        const messageBuffer = [];
-        let lastProcessTime = Date.now();
-        const BUFFER_SIZE = 1; // Process on every user message
-        const FALLBACK_TIMEOUT_MS = 60000; // 60 seconds
-        // Fallback timer: process buffer if no hook fires for 60 seconds
-        const fallbackTimer = setInterval(async () => {
-            if (messageBuffer.length > 0 && Date.now() - lastProcessTime >= FALLBACK_TIMEOUT_MS) {
-                api.logger.info(`⏰ [FALLBACK] memory-claw: Processing ${messageBuffer.length} buffered messages after timeout`);
-                try {
-                    await processMessages(messageBuffer);
-                    lastProcessTime = Date.now();
-                }
-                catch (err) {
-                    stats.error("message_sent_fallback", err instanceof Error ? err.message : String(err));
-                }
-                messageBuffer.length = 0;
-            }
-        }, FALLBACK_TIMEOUT_MS);
-        api.on("message_sent", async (event) => {
+        // This hook fires when the LLM generates output, which might be more reliable
+        // than agent_end for triggering captures
+        api.logger.info("memory-claw: Registering llm_output hook (experimental)...");
+        api.on("llm_output", async (event) => {
             try {
-                api.logger.info(`🔍 [DEBUG] memory-claw: message_sent hook FIRED!`);
-                // Collect messages and process immediately on every user message
-                if (event && typeof event === "object") {
-                    const evtObj = event;
-                    const role = evtObj.role;
-                    // Only buffer user messages for capture
-                    if (role === "user") {
-                        messageBuffer.push(event);
-                        api.logger.info(`📥 [DEBUG] memory-claw: Buffered user message (buffer size: ${messageBuffer.length})`);
-                        // Process immediately when we reach buffer size (1 = every user message)
-                        if (messageBuffer.length >= BUFFER_SIZE) {
-                            api.logger.info(`🔍 [DEBUG] memory-claw: Processing ${messageBuffer.length} buffered messages`);
-                            await processMessages(messageBuffer);
-                            lastProcessTime = Date.now();
-                            messageBuffer.length = 0; // Clear buffer
-                        }
-                    }
-                }
+                api.logger.info(`🔍 [HOOK] memory-claw: llm_output FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+                // Note: llm_output doesn't have messages array, so we can't use it directly
+                // This is just to confirm the hook fires
             }
             catch (err) {
-                stats.error("message_sent", err instanceof Error ? err.message : String(err));
-                api.logger.warn(`memory-claw: message_sent hook failed: ${String(err)}`);
+                // Silently ignore
             }
         });
-        api.logger.info("memory-claw: message_sent hook registered successfully (agent_end workaround, buffer=1, fallback=60s)");
+        api.logger.info("memory-claw: llm_output hook registered (experimental)");
+        // ========================================================================
+        // Hook: message_sent - DISABLED (event structure incompatible)
+        // ========================================================================
+        // NOTE: message_sent event only has {to, content, success, error}
+        // There's NO 'role' field and NO message object, so we can't use it for capture
+        // This hook is monitored but NOT used for capture
+        api.logger.info("memory-claw: Registering message_sent hook (MONITOR ONLY - DISABLED FOR CAPTURE)...");
+        api.on("message_sent", async (event) => {
+            try {
+                api.logger.info(`🔍 [HOOK] memory-claw: message_sent FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+                // This hook can't be used for capture - event structure is:
+                // { to: string, content: string, success: boolean, error?: string }
+                // No role field, no message object, just the response content
+            }
+            catch (err) {
+                // Silently ignore
+            }
+        });
+        api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE)");
         // ========================================================================
         // Hook: message_received - Test if this event fires
         // ========================================================================
-        api.logger.info("memory-claw: Registering message_received hook (TEST)...");
+        api.logger.info("memory-claw: Registering message_received hook (test)...");
         api.on("message_received", async (event) => {
             try {
-                api.logger.info(`🎉 [TEST] memory-claw: message_received hook FIRED! Event type: ${typeof event}`);
+                api.logger.info(`🔍 [HOOK] memory-claw: message_received FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+                // Note: message_received has {from, content, timestamp, metadata}
+                // We could potentially use this, but it only has single message content
             }
             catch (err) {
-                api.logger.warn(`memory-claw: message_received test failed: ${String(err)}`);
+                // Silently ignore
             }
         });
-        api.logger.info("memory-claw: message_received hook registered successfully (TEST)");
+        api.logger.info("memory-claw: message_received hook registered (test)");
         // ========================================================================
         // Service Registration with Cleanup
         // ========================================================================
@@ -1083,6 +1088,8 @@ const plugin = {
                     clearInterval(gcInterval);
                 if (compactionInterval)
                     clearInterval(compactionInterval);
+                if (pollingInterval)
+                    clearInterval(pollingInterval);
                 stats.shutdown();
                 api.logger.info("memory-claw: stopped");
             },

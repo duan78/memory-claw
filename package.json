@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.35",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.35: CRITICAL FIX - Changed message_sent buffer from 10 to 1 (process on every user message). Added 60-second fallback timer. Fixes capture pipeline when agent_end hook doesn't fire.",
+  "version": "2.4.37",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.37: CRITICAL FIX - message_sent hook broken (event has no role field), agent_end unreliable. Added 30-second polling fallback that reads session files directly. Comprehensive DEBUG logging added to all hooks to identify what fires.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
