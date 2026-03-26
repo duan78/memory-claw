@@ -5,26 +5,25 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.37: CAPTURE PIPELINE OVERHAUL - FIX BROKEN HOOKS
- * - CRITICAL: message_sent event only has {to, content, success} - NO role or message object!
- * - CRITICAL: agent_end hook may not fire reliably in all OpenClaw versions
- * - FIXED: Added 30-second polling fallback that reads session files directly
- * - FIXED: Added comprehensive DEBUG logging to ALL hooks to identify what fires
- * - FIXED: Hook event structures now match OpenClaw PluginHookAgentEndEvent types
- * - EXPERIMENTAL: Trying llm_output hook as alternative trigger point
- * - TEMPORARY: Polling reads from ~/.openclaw/state/session*.jsonl every 30s
- * - TODO: Once we identify which hooks actually fire, remove non-working ones
+ * v2.4.40: ENHANCED CAPTURE FILTERING - Improve quality and reduce noise
+ * - FIXED: Comprehensive noise pattern filtering (metadata blocks, system messages, compaction artifacts)
+ * - FIXED: Voice-only message detection (skips messages with empty transcript)
+ * - FIXED: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
+ * - FIXED: Filters: <relevant-memories>, ## Learned Patterns, ## Foundry, **Tools:**, **Written:**, **Outcome:**
+ * - FIXED: Filters: **Feedback Loop:**, Conversation info (untrusted), Sender (untrusted)
+ * - FIXED: Filters: System: Exec completed, Pre-compaction memory flush, HEARTBEAT_OK, Read HEARTBEAT.md
+ * - FIXED: Improved content quality scoring to prefer decisions, facts, preferences over low-value content
  *
- * v2.4.36: CAPTURE PIPELINE FIXES
- * - FIXED: Reduced fallback timeout from 60s to 10s for faster processing
- * - FIXED: Improved buffer handling with copy-on-process pattern to prevent double-processing
+ * v2.4.39: FIXED duplicate tracking - Added persistent state file that survives plugin reloads
+ * v2.4.38: Added JSONL format conversion for session file processing
+ * v2.4.37: CAPTURE PIPELINE OVERHAUL - Fixed broken hooks, added polling fallback
  *
  * Hooks:
  * - `agent_end`: Captures facts from user messages (primary, may not fire)
  * - `llm_output`: Alternative trigger when LLM generates output
  * - `session_end`: Captures facts even on crash/kill
  * - `message_sent`: DISABLED - event structure doesn't support capture
- * - Polling fallback: Reads session files every 30 seconds
+ * - Polling fallback: Reads session files every 30 seconds with enhanced filtering
  * - `before_agent_start`: Injects relevant context (tier-based)
  *
  * Tools:
@@ -39,7 +38,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.39
+ * @version 2.4.40
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -138,8 +137,9 @@ async function importFromJson(db, embeddings, filePath) {
     let imported = 0;
     let skipped = 0;
     for (const memo of data.memories) {
+        // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
         const existing = await db.findByText(memo.text, 1);
-        if (existing.length > 0 && existing[0].score > 0.85) {
+        if (existing.length > 0 && existing[0].score > 0.70) {
             skipped++;
             continue;
         }
@@ -170,8 +170,9 @@ async function migrateFromMemoryLancedb(db, embeddings, logger) {
     }
     let migrated = 0;
     for (const entry of oldEntries) {
+        // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
         const existing = await db.findByText(entry.text, 1);
-        if (existing.length > 0 && existing[0].score > 0.85) {
+        if (existing.length > 0 && existing[0].score > 0.70) {
             continue;
         }
         await db.store({
@@ -328,7 +329,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.39: FIXED duplicate tracking - Added persistent state file that survives plugin reloads. Polling position saved to ~/.openclaw/memory/memory-claw-polling-state.json after each successful processing. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.40: Enhanced capture filtering - Comprehensive noise pattern filtering, voice-only message detection, lowered deduplication threshold from 0.85 to 0.70, improved quality scoring. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -373,7 +374,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.39: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, JSONL conversion, persistent state tracking, polling fallback active, locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.40: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, enhanced noise filtering, voice-only detection, dedupe threshold 0.70, locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -411,9 +412,10 @@ const plugin = {
                     // Previous version embedded original text causing search/index mismatch
                     const vector = await embeddings.embed(normalizedText);
                     const vectorMatches = await db.search(vector, 3, 0.90, false);
+                    // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
                     let isDuplicate = false;
                     for (const match of vectorMatches) {
-                        if (calculateTextSimilarity(normalizedText, match.text) > 0.85) {
+                        if (calculateTextSimilarity(normalizedText, match.text) > 0.70) {
                             isDuplicate = true;
                             break;
                         }
@@ -788,9 +790,43 @@ const plugin = {
          * Convert JSONL session format to agent_end message format
          * JSONL format: { "type": "message", "message": { "role": "user", "content": [...] } }
          * Expected format: { "role": "user", "content": "..." }
+         *
+         * v2.4.40: Enhanced noise filtering - Filter system metadata, voice-only messages, compaction artifacts
          */
         const convertJsonlToMessages = (jsonlObjects) => {
             const messages = [];
+            // Comprehensive noise patterns to filter
+            const noisePatterns = [
+                // Memory injection tags
+                /<relevant-memories>[\s\S]*?<\/relevant-memories>/gi,
+                /<relevant-memories>/gi,
+                /<\/relevant-memories>/gi,
+                // Compaction metadata blocks
+                /##\s*Learned\s+Patterns[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /##\s*Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /\*\*Tools:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /\*\*Written:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /\*\*Outcome:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /\*\*Feedback\s+Loop:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                // Untrusted metadata markers
+                /Conversation\s+info\s+\(untrusted\s+metadata\)/gi,
+                /Sender\s+\(untrusted\s+metadata\)/gi,
+                /Sender\s*\(untrusted\)/gi,
+                /From:\s*$/gi,
+                // System execution messages
+                /System:.*Exec\s+completed/gi,
+                /Pre-compaction\s+memory\s+flush/gi,
+                // Heartbeat and system messages
+                /HEARTBEAT_OK/gi,
+                /Read\s+HEARTBEAT\.md/gi,
+                // Markdown headers (system-generated)
+                /^\s*#{3,}.*?#{3,}\s*\n+/gm,
+                /^\s*##.*?\n+/gm,
+                /^\s*•.*?\n*/gm,
+                // Generic preamble markers
+                /Learned\s+Patterns[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+                /Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+            ];
             for (const obj of jsonlObjects) {
                 if (!obj || typeof obj !== "object")
                     continue;
@@ -822,22 +858,34 @@ const plugin = {
                 }
                 if (!text || typeof text !== "string")
                     continue;
-                // Clean preamble metadata (Learned Patterns, Foundry, etc.)
-                // These are system-generated prefixes that appear in every message
-                const preamblePatterns = [
-                    /Learned Patterns:[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/i,
-                    /Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/i,
-                    /^\s*#{3,}.*?#{3,}\s*\n+/gm, // Markdown headers
-                    /^\s*##.*?\n+/gm, // Level 2 headers
-                    /^\s*•.*?\n*/gm, // Bullet points
+                // v2.4.40: Filter out voice-only messages (empty transcript or just audio markers)
+                const trimmedText = text.trim();
+                if (trimmedText.length < 30)
+                    continue; // Skip very short messages
+                // Check for voice-only message patterns (no actual transcript)
+                const voiceOnlyPatterns = [
+                    /^\[Audio\]?\s*$/i,
+                    /^\[Voice\s+Input\]?\s*$/i,
+                    /^\[Transcript\s+Empty\]?\s*$/i,
+                    /^\s*\(no\s+transcript\)\s*$/i,
+                    /^\s*\(audio\s+only\)\s*$/i,
                 ];
-                let cleanedText = text.trim();
-                for (const pattern of preamblePatterns) {
-                    cleanedText = cleanedText.replace(pattern, "\n");
+                const isVoiceOnly = voiceOnlyPatterns.some(pattern => pattern.test(trimmedText));
+                if (isVoiceOnly)
+                    continue;
+                // v2.4.40: Apply comprehensive noise pattern filtering
+                let cleanedText = trimmedText;
+                for (const pattern of noisePatterns) {
+                    cleanedText = cleanedText.replace(pattern, "");
                 }
                 cleanedText = cleanedText.replace(/\n{3,}/g, "\n\n").trim(); // Remove excessive newlines
+                // Skip if text is too short after noise filtering
                 if (cleanedText.length < 30)
-                    continue; // Skip very short messages
+                    continue;
+                // Skip if text is only whitespace or punctuation after cleaning
+                const meaningfulContent = cleanedText.replace(/[\s\p{P}]/gu, "");
+                if (meaningfulContent.length < 15)
+                    continue;
                 messages.push({
                     role: "user",
                     content: cleanedText,
@@ -984,10 +1032,11 @@ const plugin = {
                     const textForEmbedding = cleanSenderMetadata(combinedText);
                     const vector = await embeddings.embed(textForEmbedding);
                     const vectorMatches = await db.search(vector, 3, 0.90, false);
+                    // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
                     // Check for duplicates
                     let isDuplicate = false;
                     for (const match of vectorMatches) {
-                        if (calculateTextSimilarity(combinedText, match.text) > 0.85) {
+                        if (calculateTextSimilarity(combinedText, match.text) > 0.70) {
                             isDuplicate = true;
                             break;
                         }
