@@ -20,8 +20,8 @@ import { normalizeText, calculateTextSimilarity } from "../dist/src/utils/text.j
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const DB_PATH = process.env.MEMORY_CLAW_DB_PATH || join(homedir(), ".openclaw", "memory", "lancedb");
-const TABLE_NAME = process.env.MEMORY_CLAW_TABLE_NAME || "memories";
+const DB_PATH = process.env.MEMORY_CLAW_DB_PATH || join(homedir(), ".openclaw", "memory", "memory-claw");
+const TABLE_NAME = process.env.MEMORY_CLAW_TABLE_NAME || "memories_claw";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
