@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.41: CAPTURE PIPELINE FIXES - Fixed hook firing and buffer issues
+ * - FIXED: agent_end hook now tries multiple hook names (agent_end, agent:complete, conversation:end, after_agent)
+ * - FIXED: Added hook firing tracking to diagnose which hooks actually fire in OpenClaw
+ * - FIXED: message_sent hook now uses rate-limited logging (once per minute) to prevent buffer overflow
+ * - FIXED: Reduced log spam from non-firing hooks by limiting verbose logging to first 3 events
+ * - FIXED: Periodic health check logs when agent_end hook never fires
+ *
  * v2.4.40: ENHANCED CAPTURE FILTERING - Improve quality and reduce noise
  * - FIXED: Comprehensive noise pattern filtering (metadata blocks, system messages, compaction artifacts)
  * - FIXED: Voice-only message detection (skips messages with empty transcript)
@@ -19,10 +26,10 @@
  * v2.4.37: CAPTURE PIPELINE OVERHAUL - Fixed broken hooks, added polling fallback
  *
  * Hooks:
- * - `agent_end`: Captures facts from user messages (primary, may not fire)
+ * - `agent_end`: Captures facts from user messages (primary, tries multiple hook names)
  * - `llm_output`: Alternative trigger when LLM generates output
  * - `session_end`: Captures facts even on crash/kill
- * - `message_sent`: DISABLED - event structure doesn't support capture
+ * - `message_sent`: DISABLED - event structure doesn't support capture (rate-limited logging)
  * - Polling fallback: Reads session files every 30 seconds with enhanced filtering
  * - `before_agent_start`: Injects relevant context (tier-based)
  *
@@ -38,7 +45,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.40
+ * @version 2.4.41
  * @author duan78
  */
 
@@ -407,7 +414,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.40: Enhanced capture filtering - Comprehensive noise pattern filtering, voice-only message detection, lowered deduplication threshold from 0.85 to 0.70, improved quality scoring. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.41: Fixed agent_end hook firing (tries multiple hook names), rate-limited message_sent logging to prevent buffer overflow, reduced log spam. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -461,7 +468,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.40: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, enhanced noise filtering, voice-only detection, dedupe threshold 0.70, locales: ${activeLocales.length})`
+      `memory-claw v2.4.41: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, multi-hook strategy, rate-limited logging, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1158,6 +1165,10 @@ const plugin = {
     // Hook: agent_end - Auto-capture facts
     // ========================================================================
 
+    // v2.4.41: Track hook firing to diagnose issues
+    let agentEndFired = false;
+    let agentEndFireCount = 0;
+
     const processMessages = async (messages: unknown[]): Promise<void> => {
       const grouped = groupConsecutiveUserMessages(messages);
 
@@ -1292,30 +1303,66 @@ const plugin = {
 
     // Register hooks
     api.logger.info("memory-claw: Registering agent_end hook...");
-    api.on("agent_end", async (event) => {
+
+    // v2.4.41: Try alternative hook names that might fire in OpenClaw
+    const hookNames = ["agent_end", "agent:complete", "conversation:end", "after_agent"];
+    let hookRegistered = false;
+
+    for (const hookName of hookNames) {
       try {
-        api.logger.info(`🔍 [HOOK] memory-claw: agent_end FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+        api.on(hookName, async (event) => {
+          try {
+            agentEndFired = true;
+            agentEndFireCount++;
 
-        if (!event) {
-          api.logger.warn("memory-claw: agent_end event is null/undefined");
-          return;
-        }
+            // Only log first fire and every 10th fire to reduce log spam
+            if (agentEndFireCount === 1 || agentEndFireCount % 10 === 0) {
+              api.logger.info(`🔍 [HOOK] memory-claw: ${hookName} FIRED! (count: ${agentEndFireCount}) event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+            }
 
-        const messages = (event as Record<string, unknown>).messages;
-        if (!messages || !Array.isArray(messages)) {
-          api.logger.warn(`memory-claw: agent_end messages invalid: type=${typeof messages}, isArray=${Array.isArray(messages)}`);
-          return;
-        }
+            if (!event) {
+              if (agentEndFireCount === 1) {
+                api.logger.warn(`memory-claw: ${hookName} event is null/undefined`);
+              }
+              return;
+            }
 
-        api.logger.info(`memory-claw: [agent_end] Processing ${messages.length} messages`);
-        await processMessages(messages);
+            const messages = (event as Record<string, unknown>).messages;
+            if (!messages || !Array.isArray(messages)) {
+              if (agentEndFireCount <= 3) {
+                api.logger.warn(`memory-claw: ${hookName} messages invalid: type=${typeof messages}, isArray=${Array.isArray(messages)}`);
+              }
+              return;
+            }
+
+            if (cfg.enableStats && agentEndFireCount <= 3) {
+              api.logger.info(`memory-claw: [${hookName}] Processing ${messages.length} messages`);
+            }
+            await processMessages(messages);
+          } catch (err) {
+            stats.error(hookName, err instanceof Error ? err.message : String(err));
+            if (agentEndFireCount <= 3) {
+              api.logger.warn(`memory-claw: ${hookName} capture failed: ${String(err)}`);
+            }
+          }
+        });
+        hookRegistered = true;
+        api.logger.info(`memory-claw: Registered ${hookName} hook`);
       } catch (err) {
-        stats.error("agent_end", err instanceof Error ? err.message : String(err));
-        api.logger.warn(`memory-claw: agent_end capture failed: ${String(err)}`);
+        // Hook name not supported, try next
       }
-    });
+    }
 
-    api.logger.info("memory-claw: agent_end hook registered");
+    if (!hookRegistered) {
+      api.logger.warn("memory-claw: Could not register any agent_end hooks - relying on polling fallback");
+    }
+
+    // v2.4.41: Log hook status periodically
+    setInterval(() => {
+      if (!agentEndFired && cfg.enableStats) {
+        api.logger.warn("memory-claw: agent_end hook has NEVER fired - using polling fallback only");
+      }
+    }, 300000); // Check every 5 minutes
 
     // ========================================================================
     // Hook: session_end - Crash/kill recovery
@@ -1373,20 +1420,31 @@ const plugin = {
     // NOTE: message_sent event only has {to, content, success, error}
     // There's NO 'role' field and NO message object, so we can't use it for capture
     // This hook is monitored but NOT used for capture
+    // v2.4.41: Rate-limited logging to prevent buffer overflow
+
+    let messageSentCount = 0;
+    let lastMessageSentLog = 0;
 
     api.logger.info("memory-claw: Registering message_sent hook (MONITOR ONLY - DISABLED FOR CAPTURE)...");
     api.on("message_sent", async (event) => {
       try {
-        api.logger.info(`🔍 [HOOK] memory-claw: message_sent FIRED! event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+        messageSentCount++;
+
+        // Only log once per minute to prevent buffer overflow
+        const now = Date.now();
+        if (now - lastMessageSentLog > 60000) {
+          lastMessageSentLog = now;
+          api.logger.info(`🔍 [HOOK] memory-claw: message_sent FIRED! (count: ${messageSentCount}) event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+        }
         // This hook can't be used for capture - event structure is:
         // { to: string, content: string, success: boolean, error?: string }
         // No role field, no message object, just the response content
       } catch (err) {
-        // Silently ignore
+        // Silently ignore to prevent error spam
       }
     });
 
-    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE)");
+    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE - rate-limited logging)");
 
     // ========================================================================
     // Hook: message_received - Test if this event fires
