@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.53",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.53: CRITICAL FIX - Fixed agent_end hook detection (40+ variants) and message_sent buffer overflow (processes batches instead of dropping). Enhanced health monitoring.",
+  "version": "2.4.54",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.54: CRITICAL FIX - Simplified message_sent (no buffer), aggressive polling (15s), hook discovery.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
