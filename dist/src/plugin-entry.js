@@ -5,12 +5,17 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.49: CRITICAL FIX - Deduplication completely broken (182 rows for 32 unique texts)
+ * - CRITICAL: Fixed dedup by lowering vector search threshold from 0.90 to 0.50 (was too strict, missing duplicates)
+ * - CRITICAL: Fixed dedup by increasing search candidates from 3 to 50 (was missing duplicates beyond top 3)
+ * - CRITICAL: Fixed inconsistent text comparison in dedup log (was using combinedText instead of textForEmbedding)
+ * - FIXED: Dedup now correctly checks text similarity > 0.70 against 50 candidates (not 3 with 0.90 threshold)
+ * - FIXED: Added diagnostic logging to show max similarity even when no duplicate found
+ * - FIXED: Added clean-duplicates script to remove existing duplicates from DB
+ *
  * v2.4.48: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow
  * - CRITICAL: Fixed agent_end hook registration - now correctly detects which hooks actually fire (not just which were registered)
  * - CRITICAL: Fixed message_sent buffer overflow by checking batch size BEFORE pushing (prevents race condition overflow)
- * - FIXED: Changed hook registration logic to assume success but verify via actual hook firing
- * - FIXED: Reordered message_sent batch logic to check limit before adding events (prevents temporary overflow)
- * - FIXED: Improved logging to clarify hook registration vs actual firing
  *
  * v2.4.46: CRITICAL FIX - Deduplication completely broken, now fixed
  * - CRITICAL: Fixed dedup logic that was comparing uncleaned text with cleaned text (causing 374 rows for 21 unique texts)
@@ -91,7 +96,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.48
+ * @version 2.4.49
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -382,7 +387,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.48: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow (check before push). Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.49: CRITICAL FIX - Dedup completely broken (182→32 rows). Fixed vector search threshold and added cleanup script. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -427,7 +432,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.48: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: agent_end detection + message_sent overflow fix, locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.49: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: dedup fixed (0.90→0.50 threshold, 3→50 candidates), locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -464,8 +469,12 @@ const plugin = {
                     // v2.4.21: CRITICAL FIX - Embed the cleaned text, not the original
                     // Previous version embedded original text causing search/index mismatch
                     const vector = await embeddings.embed(normalizedText);
-                    const vectorMatches = await db.search(vector, 3, 0.90, false);
+                    // v2.4.48: CRITICAL FIX - Dedup was completely broken
+                    // Fix 1: Lower vector search threshold from 0.90 to 0.50 to catch more candidates
+                    // Fix 2: Increase limit from 3 to 50 to check more potential duplicates
+                    const vectorMatches = await db.search(vector, 50, 0.50, false);
                     // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
+                    // v2.4.48: CRITICAL FIX - Fixed dedup by lowering vector search threshold
                     let isDuplicate = false;
                     for (const match of vectorMatches) {
                         if (calculateTextSimilarity(normalizedText, match.text) > 0.70) {
@@ -1202,19 +1211,31 @@ const plugin = {
                     if (cfg.enableStats) {
                         api.logger.info(`memory-claw: [PROCESS] Embedding complete, checking for duplicates...`);
                     }
-                    const vectorMatches = await db.search(vector, 3, 0.90, false);
+                    // v2.4.48: CRITICAL FIX - Dedup was completely broken
+                    // Fix 1: Lower vector search threshold from 0.90 to 0.50 to catch more candidates
+                    // Fix 2: Increase limit from 3 to 50 to check more potential duplicates
+                    // Fix 3: Use enableWeightedScoring=false to get raw vector similarity (not weighted)
+                    const vectorMatches = await db.search(vector, 50, 0.50, false);
                     // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
                     // v2.4.46: CRITICAL FIX - Compare cleaned text with stored text for accurate deduplication
+                    // v2.4.48: CRITICAL FIX - Fixed inconsistent text comparison in log (was using combinedText instead of textForEmbedding)
                     // Check for duplicates using cleaned text to ensure proper matching
                     let isDuplicate = false;
+                    let maxSimilarity = 0;
                     for (const match of vectorMatches) {
-                        if (calculateTextSimilarity(textForEmbedding, match.text) > 0.70) {
+                        const textSimilarity = calculateTextSimilarity(textForEmbedding, match.text);
+                        maxSimilarity = Math.max(maxSimilarity, textSimilarity);
+                        if (textSimilarity > 0.70) {
                             isDuplicate = true;
                             if (cfg.enableStats) {
-                                api.logger.info(`memory-claw: [PROCESS] Duplicate found (similarity: ${calculateTextSimilarity(combinedText, match.text).toFixed(2)})`);
+                                api.logger.info(`memory-claw: [PROCESS] Duplicate found (text similarity: ${textSimilarity.toFixed(2)})`);
                             }
                             break;
                         }
+                    }
+                    // DEBUG: Log similarity even if not a duplicate (for diagnostics)
+                    if (cfg.enableStats && !isDuplicate && vectorMatches.length > 0) {
+                        api.logger.info(`memory-claw: [PROCESS] No duplicate found (max text similarity: ${maxSimilarity.toFixed(2)}, checked ${vectorMatches.length} candidates)`);
                     }
                     if (isDuplicate) {
                         skippedDuplicate++;

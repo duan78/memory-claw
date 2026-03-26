@@ -1,14 +1,17 @@
 {
   "name": "memory-claw",
-  "version": "2.4.48",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.48: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow (check before push to prevent race condition).",
+  "version": "2.4.49",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.49: CRITICAL FIX - Deduplication completely broken (182 rows for 32 unique texts). Fixed by lowering vector search threshold from 0.90 to 0.50 and increasing candidates from 3 to 50. Added cleanup script.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
     "build": "npx tsc --noEmit false --declaration false",
     "fix-embeddings": "node scripts/fix-embeddings.js",
     "fix-embeddings:force": "node scripts/fix-embeddings.js --force",
-    "fix-embeddings:dry-run": "node scripts/fix-embeddings.js --dry-run"
+    "fix-embeddings:dry-run": "node scripts/fix-embeddings.js --dry-run",
+    "clean-duplicates": "node scripts/clean-duplicates.js",
+    "clean-duplicates:force": "node scripts/clean-duplicates.js --force",
+    "clean-duplicates:dry-run": "node scripts/clean-duplicates.js --dry-run"
   },
   "keywords": [
     "openclaw",
