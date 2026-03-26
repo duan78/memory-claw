@@ -159,12 +159,19 @@ export class MemoryDB {
     }
     async store(entry) {
         await this.ensure();
+        // Validate required fields
+        if (!entry.text || typeof entry.text !== 'string') {
+            throw new Error('store() requires a valid text field');
+        }
+        if (!entry.vector || !(Array.isArray(entry.vector) || entry.vector instanceof Float32Array) || entry.vector.length === 0) {
+            throw new Error('store() requires a valid vector field (non-empty array or Float32Array)');
+        }
         const now = Date.now();
         const fullEntry = {
             text: entry.text,
             vector: entry.vector,
-            importance: entry.importance,
-            category: entry.category,
+            importance: entry.importance ?? 0.5,
+            category: entry.category || "other",
             source: entry.source || "manual",
             id: randomUUID(),
             tier: entry.tier || "episodic",
