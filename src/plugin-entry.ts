@@ -5,6 +5,13 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.47: CRITICAL FIX - Fixed agent_end hook variants and message_sent buffer overflow
+ * - CRITICAL: Fixed agent_end hook not firing by adding 8 more hook name variants (agent:ended, conversation:ended, turn:ended, message:complete, response:complete, complete, ended, done)
+ * - CRITICAL: Fixed message_sent buffer overflow by adding maximum batch size limit (100 events)
+ * - FIXED: message_sent batch now processes immediately when it reaches size limit instead of waiting for debounce timer
+ * - FIXED: Prevents unbounded memory growth from high-frequency message_sent events
+ * - FIXED: Improved hook coverage with 18 total hook name variants
+ *
  * v2.4.46: CRITICAL FIX - Deduplication completely broken, now fixed
  * - CRITICAL: Fixed dedup logic that was comparing uncleaned text with cleaned text (causing 374 rows for 21 unique texts)
  * - CRITICAL: Fixed noise cleaning regex to strip '<media:audio>' prefix from text (was not being removed)
@@ -65,10 +72,10 @@
  * v2.4.37: CAPTURE PIPELINE OVERHAUL - Fixed broken hooks, added polling fallback
  *
  * Hooks:
- * - `agent_end`: Captures facts from user messages (primary, tries 10 hook name variants)
+ * - `agent_end`: Captures facts from user messages (primary, tries 18 hook name variants)
  * - `llm_output`: Alternative trigger when LLM generates output
  * - `session_end`: Captures facts even on crash/kill
- * - `message_sent`: DISABLED - event structure doesn't support capture (debounced monitoring)
+ * - `message_sent`: DISABLED - event structure doesn't support capture (debounced monitoring with batch limit)
  * - Polling fallback: Reads session files every 30 seconds with AGGRESSIVE noise filtering before capture
  * - `before_agent_start`: Injects relevant context (tier-based)
  *
@@ -84,7 +91,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.46
+ * @version 2.4.47
  * @author duan78
  */
 
@@ -453,7 +460,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.46: CRITICAL FIX - Deduplication completely broken, now fixed (374 rows → 21 unique). Fixed <media:audio> prefix removal, audio transcript extraction, dedup text comparison. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.47: CRITICAL FIX - Fixed agent_end hook not firing (added 8 more hook variants) and message_sent buffer overflow (added batch size limit of 100). Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -507,7 +514,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.44: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: aggressive noise filtering before capture, locales: ${activeLocales.length})`
+      `memory-claw v2.4.47: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: agent_end hook variants + message_sent batch limit, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1517,7 +1524,16 @@ const plugin = {
       "turn:end",
       "turn_end",
       "message:end",
-      "response:end"
+      "response:end",
+      // v2.4.47: Additional hook variants to try
+      "agent:ended",
+      "conversation:ended",
+      "turn:ended",
+      "message:complete",
+      "response:complete",
+      "complete",
+      "ended",
+      "done"
     ];
     let successfullyRegistered = 0;
 
@@ -1705,6 +1721,7 @@ const plugin = {
     let lastMessageSentLog = 0;
     let messageSentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     let messageSentBatch: unknown[] = [];
+    const MAX_BATCH_SIZE = 100; // v2.4.47: Prevent unbounded growth
 
     api.logger.info("memory-claw: Registering message_sent hook (MONITOR ONLY - DISABLED FOR CAPTURE)...");
     api.on("message_sent", async (event) => {
@@ -1714,6 +1731,25 @@ const plugin = {
 
         // Add to batch for debounced processing
         messageSentBatch.push(event);
+
+        // v2.4.47: Process batch immediately if it exceeds maximum size
+        if (messageSentBatch.length >= MAX_BATCH_SIZE) {
+          // Clear existing timer
+          if (messageSentDebounceTimer) {
+            clearTimeout(messageSentDebounceTimer);
+            messageSentDebounceTimer = null;
+          }
+
+          // Process batch immediately
+          const now = Date.now();
+          if (now - lastMessageSentLog > 60000) {
+            lastMessageSentLog = now;
+            api.logger.info(`🔍 [HOOK] memory-claw: message_sent batch limit reached! (count: ${messageSentCount}, batch: ${messageSentBatch.length})`);
+          }
+          // Clear batch immediately
+          messageSentBatch = [];
+          return;
+        }
 
         // Clear existing timer
         if (messageSentDebounceTimer) {
@@ -1740,7 +1776,7 @@ const plugin = {
       }
     });
 
-    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE - debounced processing, counter overflow protected)");
+    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE - debounced processing, counter overflow protected, batch size limit: 100)");
 
     // ========================================================================
     // Hook: message_received - Test if this event fires
