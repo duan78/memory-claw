@@ -894,11 +894,12 @@ const plugin = {
 
     /**
      * Load polling state from disk to survive plugin reloads
+     * Uses synchronous I/O to ensure state is loaded before polling starts
      */
-    const loadPollingState = async (): Promise<void> => {
+    const loadPollingState = (): void => {
       try {
-        const { readFile } = await import("node:fs/promises");
-        const content = await readFile(STATE_FILE, "utf-8");
+        const { readFileSync } = require("node:fs");
+        const content = readFileSync(STATE_FILE, "utf-8");
         const state = JSON.parse(content) as PollingState;
         lastProcessedSessionFile = state.lastProcessedSessionFile;
         lastProcessedMessageIndex = state.lastProcessedMessageIndex;
@@ -914,22 +915,23 @@ const plugin = {
 
     /**
      * Save polling state to disk to survive plugin reloads
+     * Uses synchronous I/O to ensure state is saved immediately
      */
-    const savePollingState = async (): Promise<void> => {
+    const savePollingState = (): void => {
       try {
-        const { writeFile } = await import("node:fs/promises");
-        const { mkdir } = await import("node:fs/promises");
+        const { writeFileSync } = require("node:fs");
+        const { mkdirSync } = require("node:fs");
         const stateDir = join(homedir(), ".openclaw", "memory");
 
         // Ensure directory exists
-        await mkdir(stateDir, { recursive: true }).catch(() => {});
+        mkdirSync(stateDir, { recursive: true });
 
         const state: PollingState = {
           lastProcessedSessionFile,
           lastProcessedMessageIndex,
         };
 
-        await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+        writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
       } catch (err) {
         // Silently ignore save errors to avoid spam
         if (cfg.enableStats) {
@@ -1092,12 +1094,8 @@ const plugin = {
     };
 
     // Load polling state on startup to survive plugin reloads
-    // Note: This runs asynchronously, first poll will use default state if not loaded yet
-    loadPollingState().catch(() => {
-      if (cfg.enableStats) {
-        api.logger.warn("memory-claw: [POLLING] Failed to load state, starting fresh");
-      }
-    });
+    // Uses synchronous I/O to ensure state is loaded before polling starts
+    loadPollingState();
 
     // Start polling interval (30 seconds)
     const pollingInterval = setInterval(pollSessionFiles, 30000);
