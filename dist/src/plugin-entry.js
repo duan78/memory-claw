@@ -39,7 +39,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.38
+ * @version 2.4.39
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -328,7 +328,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.38: CRITICAL FIX - Added convertJsonlToMessages() to transform session file format. Polling now correctly extracts user messages from JSONL, cleans preamble metadata (Learned Patterns, Foundry), filters for role=user/human, and converts content arrays to text. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.39: FIXED duplicate tracking - Added persistent state file that survives plugin reloads. Polling position saved to ~/.openclaw/memory/memory-claw-polling-state.json after each successful processing. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -373,7 +373,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.38: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, JSONL conversion enabled, polling fallback active, locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.39: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, JSONL conversion, persistent state tracking, polling fallback active, locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -735,8 +735,53 @@ const plugin = {
         // ========================================================================
         // This is a fallback mechanism since hooks may not fire reliably
         // Reads the latest session file and processes any new user messages
+        // Persistence for tracking position across plugin reloads
+        const STATE_FILE = join(homedir(), ".openclaw", "memory", "memory-claw-polling-state.json");
         let lastProcessedSessionFile = null;
         let lastProcessedMessageIndex = -1;
+        /**
+         * Load polling state from disk to survive plugin reloads
+         */
+        const loadPollingState = async () => {
+            try {
+                const { readFile } = await import("node:fs/promises");
+                const content = await readFile(STATE_FILE, "utf-8");
+                const state = JSON.parse(content);
+                lastProcessedSessionFile = state.lastProcessedSessionFile;
+                lastProcessedMessageIndex = state.lastProcessedMessageIndex;
+                if (cfg.enableStats) {
+                    api.logger.info(`memory-claw: [POLLING] Loaded state: file=${lastProcessedSessionFile}, index=${lastProcessedMessageIndex}`);
+                }
+            }
+            catch (err) {
+                // State file doesn't exist or is corrupt - start fresh
+                lastProcessedSessionFile = null;
+                lastProcessedMessageIndex = -1;
+            }
+        };
+        /**
+         * Save polling state to disk to survive plugin reloads
+         */
+        const savePollingState = async () => {
+            try {
+                const { writeFile } = await import("node:fs/promises");
+                const { mkdir } = await import("node:fs/promises");
+                const stateDir = join(homedir(), ".openclaw", "memory");
+                // Ensure directory exists
+                await mkdir(stateDir, { recursive: true }).catch(() => { });
+                const state = {
+                    lastProcessedSessionFile,
+                    lastProcessedMessageIndex,
+                };
+                await writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+            }
+            catch (err) {
+                // Silently ignore save errors to avoid spam
+                if (cfg.enableStats) {
+                    api.logger.warn(`memory-claw: [POLLING] Failed to save state: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }
+        };
         /**
          * Convert JSONL session format to agent_end message format
          * JSONL format: { "type": "message", "message": { "role": "user", "content": [...] } }
@@ -840,11 +885,12 @@ const plugin = {
                 // Process only new messages since last check
                 const startIndex = lastProcessedMessageIndex + 1;
                 const jsonlMessages = [];
+                let newMessageCount = 0;
                 for (let i = startIndex; i < lines.length; i++) {
                     try {
                         const msg = JSON.parse(lines[i]);
                         jsonlMessages.push(msg);
-                        lastProcessedMessageIndex = i;
+                        newMessageCount++;
                     }
                     catch (e) {
                         // Skip malformed lines
@@ -861,6 +907,9 @@ const plugin = {
                 // Process the converted messages
                 if (convertedMessages.length > 0) {
                     await processMessages(convertedMessages);
+                    // Only update and save position after successful processing
+                    lastProcessedMessageIndex = startIndex + jsonlMessages.length - 1;
+                    await savePollingState();
                 }
             }
             catch (err) {
@@ -870,6 +919,13 @@ const plugin = {
                 }
             }
         };
+        // Load polling state on startup to survive plugin reloads
+        // Note: This runs asynchronously, first poll will use default state if not loaded yet
+        loadPollingState().catch(() => {
+            if (cfg.enableStats) {
+                api.logger.warn("memory-claw: [POLLING] Failed to load state, starting fresh");
+            }
+        });
         // Start polling interval (30 seconds)
         const pollingInterval = setInterval(pollSessionFiles, 30000);
         // ========================================================================

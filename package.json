@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.38",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.38: CRITICAL FIX - Added convertJsonlToMessages() to transform session file format. Polling now correctly extracts user messages from JSONL, cleans preamble metadata, filters for role=user/human, and converts content arrays to text.",
+  "version": "2.4.39",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.39: FIXED duplicate tracking - Added persistent state file that survives plugin reloads. Polling position saved to disk after each successful processing run.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
