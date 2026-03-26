@@ -53,7 +53,7 @@ export class MemoryDB {
   private table: LanceDB.Table | null = null;
   private initPromise: Promise<void> | null = null;
 
-  constructor(private readonly dbPath: string, private readonly vectorDim: number) {}
+  constructor(private readonly dbPath: string, private readonly vectorDim: number = 1024) {}
 
   private async ensure(): Promise<void> {
     if (this.table) return;
@@ -168,14 +168,18 @@ export class MemoryDB {
     vector: number[];
     importance: number;
     category: string;
-    source: MemorySource;
+    source?: MemorySource;
     tier?: MemoryTier;
     tags?: string[];
   }): Promise<MemoryEntry> {
     await this.ensure();
     const now = Date.now();
     const fullEntry = {
-      ...entry,
+      text: entry.text,
+      vector: entry.vector,
+      importance: entry.importance,
+      category: entry.category,
+      source: entry.source || "manual",
       id: randomUUID(),
       tier: entry.tier || "episodic",
       tags: entry.tags || [],

@@ -48,7 +48,7 @@ export class MemoryDB {
     db = null;
     table = null;
     initPromise = null;
-    constructor(dbPath, vectorDim) {
+    constructor(dbPath, vectorDim = 1024) {
         this.dbPath = dbPath;
         this.vectorDim = vectorDim;
     }
@@ -161,7 +161,11 @@ export class MemoryDB {
         await this.ensure();
         const now = Date.now();
         const fullEntry = {
-            ...entry,
+            text: entry.text,
+            vector: entry.vector,
+            importance: entry.importance,
+            category: entry.category,
+            source: entry.source || "manual",
             id: randomUUID(),
             tier: entry.tier || "episodic",
             tags: entry.tags || [],
