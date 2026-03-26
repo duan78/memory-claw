@@ -1,4 +1,4 @@
-# Memory Claw v2.4.25
+# Memory Claw v2.4.44
 
 **A 100% autonomous multilingual memory plugin for OpenClaw with LanceDB + Mistral Embeddings.**
 
@@ -23,13 +23,14 @@ Unlike the built-in `memory-lancedb` plugin, Memory Claw is:
 - **Intelligent**: Dynamic importance scoring, weighted recall, injection detection
 - **Multilingual**: Supports 11 languages with automatic detection
 - **Hierarchical**: Three-tier memory system (core/contextual/episodic)
-- **Complete**: Full CLI, export/import, GC, statistics
+- **Robust**: Multiple capture hooks + polling fallback for maximum reliability
+- **Complete**: Full CLI, export/import, GC, statistics, compaction
 
 ---
 
 ## Features
 
-### Hierarchical Memory (v2.3.0)
+### Hierarchical Memory
 
 Memory Claw organizes memories into three tiers for intelligent context injection:
 
@@ -47,19 +48,38 @@ Memory Claw organizes memories into three tiers for intelligent context injectio
 **Tier Promotion/Demotion:**
 - Use `mclaw_promote` to move memory up a tier
 - Use `mclaw_demote` to move memory down a tier
-- **Auto-promotion on recall** (v2.4.0): Memories are automatically promoted when frequently accessed
+- **Auto-promotion on recall**: Memories are automatically promoted when frequently accessed
 
-### Performance Optimizations (v2.4.0)
+### Multiple Capture Strategies (v2.4.37+)
 
-Memory Claw v2.4.0 includes significant performance improvements:
+Memory Claw uses multiple hooks and a polling fallback to ensure no important information is lost:
 
-| Feature | Before | After |
-|---------|--------|-------|
-| **Stats Tracking** | Disk write on every operation | Debounced (30s flush) |
-| **Embeddings API** | Call for every request | LRU cache (1000 entries, 1h TTL) |
-| **Hit Count Updates** | 1 query + 1 update per memory | Batch updates |
-| **Search Results** | Returns full 1024-float vectors | Vectors excluded via `.select()` |
-| **Garbage Collection** | All memories treated equally | Core memories protected |
+**Primary Hooks:**
+- `agent_end`: Captures facts from user messages (tries 10 hook name variants)
+- `session_end`: Captures facts even on crash/kill
+- `llm_output`: Experimental alternative trigger
+
+**Polling Fallback:**
+- Reads session files every 30 seconds
+- **Aggressive noise filtering** before capture logic
+- Handles voice transcripts with metadata blocks
+- Preserves actual user content after markers like "[Audio]", "Transcript:", etc.
+
+**Disabled Hooks:**
+- `message_sent`: Event structure incompatible (monitored only)
+
+### Performance Optimizations
+
+Memory Claw includes significant performance improvements:
+
+| Feature | Implementation |
+|---------|----------------|
+| **Stats Tracking** | Debounced (30s flush) - no disk I/O per operation |
+| **Embeddings API** | LRU cache (1000 entries, 1h TTL) |
+| **Hit Count Updates** | Batch updates |
+| **Search Results** | Vectors excluded via `.select()` |
+| **Garbage Collection** | Core memories protected, tier-aware thresholds |
+| **Database Compaction** | Periodic (6 hours) + manual trigger available |
 
 **Expected Improvements:**
 - `before_agent_start` latency reduced by ~50%
@@ -82,13 +102,15 @@ Memory Claw supports eleven languages with automatic detection:
 - **Korean (ko)**: Korean with Hangul / 한국어
 - **Arabic (ar)**: Arabic with RTL support / العربية
 
-### Improved Capture Filtering (v2.3.1)
+### Improved Capture Filtering (v2.4.40+)
 
 Smart filtering to avoid capturing noise:
-- **Minimum length**: 50 characters (up from 20)
-- **Minimum importance**: 0.45 threshold for auto-capture
+- **Minimum length**: 30 characters (relaxed from 50 for better coverage)
+- **Minimum importance**: 0.25 threshold for auto-capture (lowered from 0.45)
 - **Skip patterns**: Sender metadata, debug logs, temporary queries
-- **Pure questions**: Filtered unless they contain factual content
+- **Voice-only detection**: Skips empty transcripts
+- **Comprehensive noise patterns**: Removes metadata blocks, system messages, compaction artifacts
+- **Aggressive filtering**: Applied BEFORE capture logic to handle voice transcripts correctly
 
 ### Dynamic Importance Calculation
 
@@ -99,7 +121,7 @@ Each memory receives a score (0-1) calculated dynamically based on:
 - **Length**: Bonus for concise texts (50-300 characters)
 - **Keywords**: Bonus for "important", "essential", "always", "never"
 - **Density**: Bonus for proper names, dates, numbers
-- **Penalties**: Questions, vague expressions ("I think", "maybe")
+- **Penalties**: Removed question penalty - user questions are valuable context
 
 ### Weighted Intelligent Recall
 
@@ -122,11 +144,11 @@ Advanced protection against prompt injection attacks:
 ### Automatic Garbage Collection
 
 - Configurable interval (default: 24 hours)
-- **Tier-aware** (v2.4.0):
+- **Tier-aware**:
   - Core memories: **never deleted** (protected)
   - Contextual memories: 2x maxAge, half minHitCount thresholds
   - Episodic memories: normal thresholds
-- Initial GC runs 1 minute after startup
+- Initial GC runs 10 minutes after startup
 - Preserves important or frequently used memories
 
 ---
@@ -164,12 +186,14 @@ Add to your `openclaw.json` file:
           "maxCapturePerTurn": 5,
           "captureMinChars": 50,
           "captureMaxChars": 3000,
-          "minCaptureImportance": 0.45,
+          "minCaptureImportance": 0.25,
           "recallLimit": 5,
           "recallMinScore": 0.3,
           "enableStats": true,
           "gcInterval": 86400000,
           "gcMaxAge": 2592000000,
+          "gcMinImportance": 0.2,
+          "gcMinHitCount": 1,
           "rateLimitMaxPerHour": 10,
           "enableWeightedRecall": true,
           "enableDynamicImportance": true
@@ -203,12 +227,14 @@ openclaw start
 | `maxCapturePerTurn` | number | `5` | Maximum memories captured per turn |
 | `captureMinChars` | number | `50` | Minimum text length for capture |
 | `captureMaxChars` | number | `3000` | Maximum text length for capture |
-| `minCaptureImportance` | number | `0.45` | Minimum importance for auto-capture |
+| `minCaptureImportance` | number | `0.25` | Minimum importance for auto-capture |
 | `recallLimit` | number | `5` | Maximum memories recalled |
 | `recallMinScore` | number | `0.3` | Minimum similarity score for recall (0-1) |
 | `enableStats` | boolean | `true` | Enable statistics and detailed logs |
 | `gcInterval` | number | `86400000` | GC interval in ms (default: 24h) |
 | `gcMaxAge` | number | `2592000000` | Maximum memory age in ms (default: 30 days) |
+| `gcMinImportance` | number | `0.2` | Minimum importance for GC deletion |
+| `gcMinHitCount` | number | `1` | Minimum hit count for GC deletion |
 | `rateLimitMaxPerHour` | number | `10` | Maximum captures per hour |
 | `enableWeightedRecall` | boolean | `true` | Enable weighted scoring for recall |
 | `enableDynamicImportance` | boolean | `true` | Enable dynamic importance calculation |
@@ -217,7 +243,7 @@ openclaw start
 
 ## Tools
 
-The plugin registers 8 tools that can be used by the AI agent:
+The plugin registers 10 tools that can be used by the AI agent:
 
 ### mclaw_store
 
@@ -227,7 +253,6 @@ Manually store a memo in memory.
 - `text` (string, required): Text content to store
 - `importance` (number, optional): Importance score 0-1 (default: auto-calculated)
 - `category` (string, optional): Category (preference, decision, entity, seo, technical, workflow, debug, fact)
-- `tier` (string, optional): Memory tier (core, contextual, episodic)
 
 ### mclaw_recall
 
@@ -236,7 +261,6 @@ Search stored memories by semantic similarity with weighted scoring.
 **Parameters:**
 - `query` (string, required): Search query
 - `limit` (number, optional): Max results (default: 5)
-- `tierFilter` (string[], optional): Filter by tiers (e.g., ["core", "contextual"])
 
 ### mclaw_forget
 
@@ -266,22 +290,33 @@ Run garbage collection to remove old, low-importance memories.
 
 **Parameters:**
 - `maxAge` (number, optional): Max age in ms (default: 30 days)
-- `minImportance` (number, optional): Min importance (default: 0.5)
-- `minHitCount` (number, optional): Min hit count (default: 3)
+- `minImportance` (number, optional): Min importance (default: 0.2)
+- `minHitCount` (number, optional): Min hit count (default: 1)
 
-### mclaw_promote (v2.3.0)
+### mclaw_promote
 
 Promote a memory to a higher tier (episodic → contextual → core).
 
 **Parameters:**
 - `memoryId` (string, required): Memory ID to promote
 
-### mclaw_demote (v2.3.0)
+### mclaw_demote
 
 Demote a memory to a lower tier (core → contextual → episodic).
 
 **Parameters:**
 - `memoryId` (string, required): Memory ID to demote
+
+### mclaw_stats
+
+Get database statistics including memory count, estimated size, and optional embedding cache stats.
+
+**Parameters:**
+- `includeEmbeddings` (boolean, optional): Include embedding cache stats
+
+### mclaw_compact
+
+Manually trigger database compaction to reduce transaction file bloat.
 
 ---
 
@@ -326,11 +361,13 @@ Delete all stored memories (requires confirmation).
 
 ### Architecture
 
-Memory Claw uses three hooks to integrate with OpenClaw:
+Memory Claw uses multiple hooks and polling to integrate with OpenClaw:
 
 1. **before_agent_start**: Injects relevant context before each agent response (tier-based)
-2. **agent_end**: Captures facts from successful conversations
+2. **agent_end**: Captures facts from successful conversations (tries 10 hook name variants)
 3. **session_end**: Recovery hook for crash/kill scenarios
+4. **llm_output**: Experimental alternative trigger
+5. **Polling fallback**: Reads session files every 30 seconds with aggressive noise filtering
 
 ### Tier-Based Injection
 
@@ -344,13 +381,25 @@ Context is injected based on memory tier:
 
 ### Capture Flow
 
-1. User sends message(s)
-2. Messages filtered for metadata, debug content, pure questions
-3. Checked against trigger patterns (multilingual)
-4. Minimum importance threshold (0.45) applied
-5. Dynamic importance calculated
-6. Tier automatically assigned
-7. Memory stored with embeddings
+1. Multiple hooks trigger on conversation events
+2. Messages grouped by consecutive user messages
+3. **Aggressive noise filtering** removes metadata blocks before capture logic
+4. Checked against trigger patterns (multilingual)
+5. Minimum importance threshold (0.25) applied
+6. Dynamic importance calculated
+7. Tier automatically assigned
+8. Memory stored with embeddings
+
+### Polling Fallback
+
+When hooks don't fire reliably:
+1. Reads latest session file every 30 seconds
+2. Parses JSONL format messages
+3. **Aggressive noise filtering** before capture logic
+4. Handles voice transcripts with metadata blocks
+5. Preserves user content after markers like "[Audio]", "Transcript:"
+6. Processes only new messages since last check
+7. State persists across plugin reloads
 
 ---
 
@@ -398,87 +447,102 @@ Memories are automatically categorized into 8 types:
 
 ## Changelog
 
-### v2.4.25 (Current)
-- **Synchronized Metadata Cleaning:**
-  - FIXED: Synchronized fix-embeddings.js with text.ts v2.4.24 metadata cleaning patterns
-  - FIXED: Updated fix-embeddings.js to version 2.4.25 for consistency
-  - IMPROVED: Added explicit metadata cleaning in processMessages for maximum quality
-  - IMPROVED: Ensured all embeddings generated from consistently cleaned text
-- **Maintenance:**
-  - Regenerated all embeddings with force option for cleanliness
-  - Updated version numbers across all files
+### v2.4.44 (Current)
+- **CRITICAL FIX - Aggressive Noise Filtering:**
+  - FIXED: Noise patterns now remove metadata blocks BEFORE capture logic
+  - FIXED: Patterns properly handle voice transcripts with metadata blocks before actual user content
+  - FIXED: Preserve actual user content that comes after "[Audio]", "[Voice", "User text:", "Transcript:" markers
+  - FIXED: All noise filtering happens in convertJsonlToMessages BEFORE processMessages/shouldCapture
+  - FIXED: Messages like "[Audio] User text: [...] Transcript: Ok, est-ce qu'on peut vérifier..." now captured correctly
 
-### v2.4.24
-- **Shared Metadata Cleaning:**
-  - FIXED: Created shared cleanSenderMetadata utility in text.ts for consistency
-  - FIXED: Eliminated code duplication between plugin-entry.ts and fix-embeddings.js
-  - IMPROVED: Enhanced embeddings.embed() to use metadata cleaning for better quality
-  - IMPROVED: Better text normalization with comprehensive metadata removal
+### v2.4.43
+- **CAPTURE PIPELINE FIXES:**
+  - FIXED: agent_end hook now tries 10 different hook name variants
+  - FIXED: Enhanced event structure detection - tries multiple patterns
+  - FIXED: Added lastFiredAt timestamp to hook tracking for better diagnostics
+  - FIXED: message_sent hook now uses debouncing (1-second batch window) to prevent buffer/queue overflow
+  - FIXED: Improved error handling for all hooks with more detailed logging
+
+### v2.4.42
+- **CAPTURE PIPELINE FIXES:**
+  - FIXED: agent_end hook uses separate closures for each hook name
+  - FIXED: Enhanced hook tracking with per-hook statistics
+  - FIXED: message_sent counter uses modulo reset to prevent integer overflow
+  - FIXED: Relaxed capture filter - captures ALL user messages > 30 chars
+  - FIXED: Removed question penalty - user questions are valuable context
+  - FIXED: For user messages: bypass importance threshold
+
+### v2.4.41
+- **CAPTURE PIPELINE FIXES:**
+  - FIXED: agent_end hook tries multiple hook names
+  - FIXED: Added hook firing tracking to diagnose which hooks fire
+  - FIXED: message_sent hook uses rate-limited logging to prevent buffer overflow
+  - FIXED: Periodic health check logs when agent_end hook never fires
+
+### v2.4.40
+- **ENHANCED CAPTURE FILTERING:**
+  - FIXED: Comprehensive noise pattern filtering
+  - FIXED: Voice-only message detection
+  - FIXED: Lowered deduplication threshold from 0.85 to 0.70
+  - FIXED: Filters: metadata blocks, system messages, compaction artifacts
+  - FIXED: Improved content quality scoring
+
+### v2.4.39
+- FIXED: Duplicate tracking with persistent state file that survives plugin reloads
+
+### v2.4.38
+- Added: JSONL format conversion for session file processing
+
+### v2.4.37
+- **CAPTURE PIPELINE OVERHAUL:**
+  - FIXED: Broken hooks, added polling fallback
+  - FIXED: Reads session files every 30 seconds with aggressive noise filtering
+
+### v2.4.28
+- FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) to DEFAULT_CONFIG
+- FIXED: GC thresholds now match capture thresholds to prevent memory loss
 
 ### v2.4.9
 - **CRITICAL BUG FIXES:**
-  - FIXED: Corrected mistral-embed vector dimension (256 not 1024) - was causing DB errors
+  - FIXED: Corrected mistral-embed vector dimension (256 not 1024)
   - FIXED: Updated dimension detection logic for all embedding models
-  - FIXED: Version consistency across all files (package.json, README, code)
-- **Improvements:**
-  - Better auto-detection of vector dimensions
-  - Cleaner error messages for dimension mismatches
 
 ### v2.4.5
-- **Bug Fixes:**
-  - Fixed version inconsistencies in plugin comments and log messages (v2.4.2 → v2.4.5)
-  - Fixed `skippedLowImportance` counter - now properly tracks content skipped due to low importance
-  - Fixed importance threshold - now uses configured `minCaptureImportance` instead of hardcoded 0.3
-  - Improved capture logging with detailed breakdown of skip reasons
-- **Improvements:**
-  - Enhanced LanceDB compaction strategy with better fallback behavior
-  - Added `skippedOther` counter for future extensibility
+- FIXED: Version inconsistencies in plugin comments
+- FIXED: `skippedLowImportance` counter tracking
+- FIXED: Importance threshold uses configured `minCaptureImportance`
 
 ### v2.4.2
-- **LanceDB Schema Fix:**
-  - Fixed schema inference for empty tags array - use `[""]` instead of `[]` to force string[] type
+- FIXED: LanceDB Schema - schema inference for empty tags array
 
 ### v2.4.1
-- **OpenClaw Compatibility Fix:**
-  - Changed `isMemory: true` to `kind: "memory"` for proper memory slot detection
-  - Using `api.pluginConfig` for correct config access (fallback to nested config for backward compatibility)
-  - Added root `index.ts` entry point for OpenClaw plugin discovery
-  - Updated manifest to point to `index.ts`
+- FIXED: OpenClaw Compatibility - using `kind: "memory"` for proper detection
+- FIXED: Added root `index.ts` entry point
 
 ### v2.4.0
 - **Performance Optimizations:**
-  - Debounced stats tracking (30s flush) - no disk I/O per operation
-  - LRU embedding cache (1000 entries, 1h TTL) - reduced API calls
-  - Batch hit count updates - efficient DB operations
-  - Vector exclusion from search results - memory bandwidth savings
+  - Debounced stats tracking (30s flush)
+  - LRU embedding cache (1000 entries, 1h TTL)
+  - Batch hit count updates
+  - Vector exclusion from search results
 - **Features:**
   - Auto-promotion on memory recall
-  - Tier-aware GC: core memories protected, contextual lenient thresholds
-  - Fixed importance formula (50-300 char sweet spot)
+  - Tier-aware GC
+  - Fixed importance formula
 - **Code Quality:**
   - Modular structure (src/ directory)
   - Single entry point: `src/plugin-entry.ts`
-  - Reduced code duplication
-- **Bug Fixes:**
-  - Fixed duplicate entry points causing module resolution errors
-  - Added DB migration for `tier` field on existing tables
-  - Added `isMemory: true` flag for OpenClaw memory slot detection
-  - Removed obsolete build artifacts from repository
 
 ### v2.3.1
 - Improved capture filtering to reduce noise
 - Increased `captureMinChars` from 20 to 50
 - Added `minCaptureImportance` threshold (0.45)
-- Expanded skip patterns for metadata/debug content
-- Filter pure questions without factual content
 
 ### v2.3.0
 - Hierarchical memory (core/contextual/episodic tiers)
 - Tier-based context injection
 - 6 new languages: Italian, Portuguese, Russian, Japanese, Korean, Arabic
 - New tools: `mclaw_promote`, `mclaw_demote`
-- Automatic tier assignment and promotion
-- Extended database schema with tier, tags, lastAccessed
 
 ### v2.2.0
 - Multilingual support (French, English, Spanish, German, Chinese)
@@ -513,4 +577,4 @@ ISC
 
 ---
 
-**Memory Claw v2.4.25 — Your memory, enhanced.**
+**Memory Claw v2.4.44 — Your memory, enhanced.**
