@@ -5,15 +5,15 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
- * v2.4.54: CRITICAL FIX - Fixed message_sent buffer overflow, improved agent_end hook detection
- * - CRITICAL: Simplified message_sent hook - removed batching, now just counts/logs (no buffer)
- * - CRITICAL: Made polling fallback more aggressive (15s instead of 30s) as primary mechanism
- * - CRITICAL: Added hook discovery mechanism to detect which hooks OpenClaw actually supports
- * - CRITICAL: Enhanced hook diagnostics with event structure capture
- * - FIXED: message_sent no longer accumulates events - just rate-limited logging
- * - FIXED: Faster health checks (10s and 30s) for quicker diagnosis
- * - FIXED: Better diagnostics showing which hooks fire and their event structure
- * - FIXED: Polling is now the primary capture mechanism (more reliable)
+ * v2.4.55: CRITICAL FIX - Error backoff, DB integrity check, circuit breaker for embeddings
+ * - CRITICAL: Added circuit breaker pattern - stops operations after 10 consecutive errors
+ * - CRITICAL: Automatic backoff - pauses polling for 5 minutes after threshold
+ * - CRITICAL: DB integrity check - recreates corrupted tables automatically
+ * - CRITICAL: Circuit breaker for embedding API - prevents error loops on API failures
+ * - FIXED: Reduced polling frequency from 15s to 30s to prevent CPU spikes
+ * - FIXED: Added max errors per hour limit (100/hour) with global disable
+ * - FIXED: Better error tracking with consecutive error counting
+ * - FIXED: Returns cached embeddings when API circuit is open
  *
  * v2.4.53: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow (again)
  * - CRITICAL: Fixed message_sent buffer overflow - now processes full batches instead of dropping events
@@ -154,10 +154,10 @@ import { loadLocales, detectLanguage, getAvailableLocales, type LocalePatterns }
 
 // Import modular components
 import type { FrenchMemoryConfig, MemoryEntry, MemoryTier, MemoryExport, SearchResult } from "./types.js";
-import { DEFAULT_CONFIG, DEFAULT_DB_PATH, STATS_PATH, OLD_TABLE_NAME } from "./config.js";
+import { DEFAULT_CONFIG, DEFAULT_DB_PATH, STATS_PATH, OLD_TABLE_NAME, ERROR_BACKOFF_THRESHOLD, ERROR_BACKOFF_DURATION, MAX_ERRORS_PER_HOUR, POLLING_INTERVAL } from "./config.js";
 import { MemoryDB } from "./db.js";
 import { Embeddings } from "./embeddings.js";
-import { RateLimiter, TierManager, StatsTracker } from "./classes/index.js";
+import { RateLimiter, TierManager, StatsTracker, CircuitBreaker } from "./classes/index.js";
 import {
   normalizeText,
   cleanSenderMetadata,
@@ -509,7 +509,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.54: CRITICAL FIX - Simplified message_sent (no buffer), aggressive polling (15s), hook discovery. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.55: CRITICAL FIX - Error backoff (10 errors → 5min pause), DB integrity check + recovery, circuit breaker for embeddings, reduced polling (30s). Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -562,8 +562,15 @@ const plugin = {
     const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
     const tierManager = new TierManager();
 
+    // v2.4.55: Circuit breaker for error backoff
+    const pollingCircuitBreaker = new CircuitBreaker({
+      consecutiveErrorThreshold: ERROR_BACKOFF_THRESHOLD,
+      backoffDurationMs: ERROR_BACKOFF_DURATION,
+      maxErrorsPerHour: MAX_ERRORS_PER_HOUR,
+    });
+
     api.logger.info(
-      `memory-claw v2.4.54: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: message_sent simplified (no buffer), polling 15s, hook discovery, locales: ${activeLocales.length})`
+      `memory-claw v2.4.55: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: error backoff, DB integrity check, circuit breaker, polling 30s, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -1226,6 +1233,16 @@ const plugin = {
 
     const pollSessionFiles = async (): Promise<void> => {
       const pollStart = Date.now();
+
+      // v2.4.55: Check circuit breaker before polling
+      const circuitState = pollingCircuitBreaker.canProceed();
+      if (!circuitState.allowed) {
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Skipped: ${circuitState.reason}`);
+        }
+        return;
+      }
+
       try {
         const { readFile } = await import("node:fs/promises");
         const { readdir } = await import("node:fs/promises");
@@ -1357,12 +1374,25 @@ const plugin = {
           if (cfg.enableStats) {
             api.logger.info(`memory-claw: [POLLING] Completed in ${elapsed}ms, updated index to ${lastProcessedMessageIndex}`);
           }
+
+          // v2.4.55: Record success to circuit breaker
+          pollingCircuitBreaker.recordSuccess();
         }
       } catch (err) {
+        // v2.4.55: Record error to circuit breaker
+        const errorResult = pollingCircuitBreaker.recordError();
+        if (errorResult.circuitOpened) {
+          api.logger.warn(`memory-claw: [POLLING] Circuit opened due to ${ERROR_BACKOFF_THRESHOLD} consecutive errors - pausing for ${ERROR_BACKOFF_DURATION / 1000}s`);
+        }
+        if (errorResult.globallyDisabled) {
+          api.logger.error(`memory-claw: [POLLING] Globally disabled - too many errors (> ${MAX_ERRORS_PER_HOUR}/hour)`);
+        }
+
         // Log polling errors
         if (cfg.enableStats) {
           api.logger.warn(`memory-claw: [POLLING] Error: ${err instanceof Error ? err.message : String(err)}`);
           api.logger.warn(`memory-claw: [POLLING] Stack: ${err instanceof Error ? err.stack : 'No stack trace'}`);
+          api.logger.warn(`memory-claw: [POLLING] ${pollingCircuitBreaker.getDiagnostics()}`);
         }
       }
     };
@@ -1371,8 +1401,8 @@ const plugin = {
     // Uses synchronous I/O to ensure state is loaded before polling starts
     loadPollingState();
 
-    // Start polling interval (15 seconds - more aggressive as primary mechanism)
-    const pollingInterval = setInterval(pollSessionFiles, 15000);
+    // v2.4.55: Start polling interval (30 seconds - reduced from 15s to prevent CPU spikes)
+    const pollingInterval = setInterval(pollSessionFiles, POLLING_INTERVAL);
 
     // ========================================================================
     // Hook: agent_end - Auto-capture facts

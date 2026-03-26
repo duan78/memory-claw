@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.54",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.54: CRITICAL FIX - Simplified message_sent (no buffer), aggressive polling (15s), hook discovery.",
+  "version": "2.4.55",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.55: CRITICAL FIX - Error backoff (10 errors → 5min pause), DB integrity check + recovery, circuit breaker for embeddings, reduced polling (30s).",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

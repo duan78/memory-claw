@@ -71,3 +71,8 @@ export const SOURCE_IMPORTANCE = {
     session_end: 0.6,
     "auto-capture": 0.6,
 };
+// v2.4.55: Circuit breaker and error backoff configuration
+export const ERROR_BACKOFF_THRESHOLD = 10; // Open circuit after this many consecutive errors
+export const ERROR_BACKOFF_DURATION = 300000; // 5 minutes in milliseconds
+export const MAX_ERRORS_PER_HOUR = 100; // Global error limit per hour
+export const POLLING_INTERVAL = 30000; // 30 seconds (increased from 15s to reduce CPU)

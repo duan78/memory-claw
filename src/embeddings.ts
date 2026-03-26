@@ -1,5 +1,11 @@
 /**
- * Memory Claw v2.4.27 - Embeddings Client with LRU Cache
+ * Memory Claw v2.4.55 - Embeddings Client with LRU Cache and Circuit Breaker
+ *
+ * v2.4.55 improvements:
+ * - Added circuit breaker for API calls to prevent error loops
+ * - Tracks consecutive embedding failures and stops API calls after threshold
+ * - Returns cached vectors when circuit is open
+ * - Reduces CPU spikes from repeated failed API calls
  *
  * v2.4.27 improvements:
  * - Enhanced embed() to use comprehensive cleanSenderMetadata for consistent metadata cleaning
@@ -17,11 +23,12 @@
  * - Enhanced metadata cleaning patterns with more system artifacts
  * - Improved vector detection for LanceDB FixedSizeList format
  *
- * @version 2.4.27
+ * @version 2.4.55
  * @author duan78
  */
 
 import { normalizeText, cleanSenderMetadata } from "./utils/text.js";
+import { CircuitBreaker } from "./classes/circuit-breaker.js";
 
 interface CacheEntry {
   vector: number[];
@@ -35,6 +42,9 @@ export class Embeddings {
   private cache = new Map<string, CacheEntry>();
   private readonly cacheTTL = 3600000; // 1 hour in milliseconds
   private readonly maxCacheSize = 1000;
+
+  // v2.4.55: Circuit breaker for API calls
+  private apiCircuitBreaker: CircuitBreaker;
 
   constructor(
     apiKey: string,
@@ -51,6 +61,13 @@ export class Embeddings {
     } else {
       this.baseUrl = baseUrl || "https://api.mistral.ai/v1";
     }
+
+    // v2.4.55: Initialize circuit breaker for API calls
+    this.apiCircuitBreaker = new CircuitBreaker({
+      consecutiveErrorThreshold: 5, // Open after 5 consecutive API errors
+      backoffDurationMs: 60000, // Wait 1 minute before retrying
+      maxErrorsPerHour: 50, // Max 50 API errors per hour
+    });
   }
 
   /**
@@ -90,6 +107,19 @@ export class Embeddings {
     const cached = this.cache.get(hash);
     if (cached && Date.now() - cached.ts < this.cacheTTL) {
       return cached.vector;
+    }
+
+    // v2.4.55: Check circuit breaker before making API call
+    const circuitState = this.apiCircuitBreaker.canProceed();
+    if (!circuitState.allowed) {
+      console.warn(`memory-claw: Embedding API circuit breaker active: ${circuitState.reason}`);
+      // If circuit is open but we have cached results, return them (even if expired)
+      if (cached) {
+        console.warn("memory-claw: Using expired cache due to circuit breaker");
+        return cached.vector;
+      }
+      // Otherwise throw an error
+      throw new Error(`Embedding API unavailable: ${circuitState.reason}`);
     }
 
     // Clean expired entries periodically (when cache is getting full)
@@ -140,8 +170,17 @@ export class Embeddings {
       }
       this.cache.set(hash, { vector, ts: Date.now() });
 
+      // v2.4.55: Record success to circuit breaker
+      this.apiCircuitBreaker.recordSuccess();
+
       return vector;
     } catch (error) {
+      // v2.4.55: Record error to circuit breaker
+      const errorResult = this.apiCircuitBreaker.recordError();
+      if (errorResult.circuitOpened) {
+        console.warn(`memory-claw: Embedding API circuit breaker opened - pausing API calls for 60 seconds`);
+      }
+
       if (error instanceof Error) {
         throw new Error(`Embedding failed: ${error.message}`);
       }
@@ -166,5 +205,12 @@ export class Embeddings {
       maxSize: this.maxCacheSize,
       ttlMs: this.cacheTTL,
     };
+  }
+
+  /**
+   * v2.4.55: Get circuit breaker diagnostics for monitoring
+   */
+  getCircuitBreakerDiagnostics(): string {
+    return this.apiCircuitBreaker.getDiagnostics();
   }
 }

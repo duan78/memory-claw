@@ -48,13 +48,95 @@ export class MemoryDB {
     db = null;
     table = null;
     initPromise = null;
+    isCorrupted = false;
+    corruptionRetries = 0;
+    MAX_CORRUPTION_RETRIES = 3;
     constructor(dbPath, vectorDim = 1024) {
         this.dbPath = dbPath;
         this.vectorDim = vectorDim;
     }
+    /**
+     * v2.4.55: Check database integrity before operations
+     * Tests if the table is accessible and recreates it if corrupted
+     * Returns true if DB is healthy, false if there were issues
+     */
+    async integrityCheck() {
+        try {
+            if (!this.db) {
+                return false;
+            }
+            // Try to access the table
+            if (this.table) {
+                // Try a simple count operation to test connectivity
+                await this.table.countRows();
+                return true;
+            }
+            return false;
+        }
+        catch (error) {
+            console.warn(`memory-claw: DB integrity check failed: ${error}`);
+            this.isCorrupted = true;
+            return false;
+        }
+    }
+    /**
+     * v2.4.55: Attempt to recover from corruption by recreating the table
+     * This is a last resort when the DB is corrupted
+     */
+    async recoverFromCorruption() {
+        if (this.corruptionRetries >= this.MAX_CORRUPTION_RETRIES) {
+            console.error("memory-claw: Max corruption recovery retries reached, giving up");
+            return false;
+        }
+        this.corruptionRetries++;
+        console.warn(`memory-claw: Attempting corruption recovery (attempt ${this.corruptionRetries}/${this.MAX_CORRUPTION_RETRIES})`);
+        try {
+            // Drop the corrupted table and recreate it
+            const lancedb = await import("@lancedb/lancedb");
+            this.db = await lancedb.connect(this.dbPath);
+            const tables = await this.db.tableNames();
+            if (tables.includes(TABLE_NAME)) {
+                console.warn("memory-claw: Dropping corrupted table...");
+                await this.db.dropTable(TABLE_NAME);
+            }
+            // Recreate with fresh schema
+            const schemaData = [{
+                    id: "__schema__",
+                    text: "",
+                    vector: new Float32Array(this.vectorDim),
+                    importance: 0,
+                    category: "other",
+                    tier: "episodic",
+                    tags: [""],
+                    createdAt: 0,
+                    updatedAt: 0,
+                    lastAccessed: 0,
+                    source: "manual",
+                    hitCount: 0,
+                }];
+            this.table = await this.db.createTable(TABLE_NAME, schemaData);
+            await this.table.delete('id = "__schema__"');
+            this.isCorrupted = false;
+            console.warn("memory-claw: Database recovered successfully - table recreated");
+            return true;
+        }
+        catch (error) {
+            console.error(`memory-claw: Corruption recovery failed: ${error}`);
+            return false;
+        }
+    }
     async ensure() {
-        if (this.table)
+        if (this.table) {
+            // v2.4.55: Check integrity on each use, recover if corrupted
+            if (this.isCorrupted || !(await this.integrityCheck())) {
+                console.warn("memory-claw: Database corruption detected, attempting recovery...");
+                const recovered = await this.recoverFromCorruption();
+                if (!recovered) {
+                    throw new Error("Database corrupted and recovery failed");
+                }
+            }
             return;
+        }
         if (this.initPromise)
             return this.initPromise;
         this.initPromise = this.init();
