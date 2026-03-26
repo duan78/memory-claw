@@ -995,33 +995,44 @@ const plugin = {
         // Memory injection tags (must be removed first)
         /<relevant-memories>[\s\S]*?<\/relevant-memories>/gi,
 
-        // v2.4.44: Aggressive compaction metadata blocks - remove until user content markers
-        /##\s*Learned\s+Patterns[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
-        /##\s*Foundry[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
-        /##\s*[A-Z][a-z]+.*?[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
+        // v2.4.44: CRITICAL FIX - Remove compaction metadata blocks that interfere with voice transcripts
+        // These blocks appear before actual user content and must be completely removed
+        /##\s*Learned\s+Patterns[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /##\s*Foundry:[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /##\s*[A-Z][a-z]+:[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
 
-        // Tool and execution metadata
-        /\*\*Tools:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /\*\*Written:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /\*\*Outcome:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /\*\*Feedback\s+Loop:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        // Tool and execution metadata (multi-line blocks)
+        /\*\*Tools:\*\*[\s\S]*?(?=\n##|\n\*\*[A-Z]|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /\*\*Written:\*\*[\s\S]*?(?=\n##|\n\*\*[A-Z]|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /\*\*Outcome:\*\*[\s\S]*?(?=\n##|\n\*\*[A-Z]|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /\*\*Feedback\s+Loop:\*\*[\s\S]*?(?=\n##|\n\*\*[A-Z]|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
 
-        // Untrusted metadata markers
-        /Conversation\s+info\s+\(untrusted\s+metadata\)[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /Sender\s+\(untrusted\s+metadata\)[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /From:\s*$[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        // Untrusted metadata blocks (including JSON blocks)
+        /Conversation\s+info\s+\(untrusted\s+metadata\)[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /Sender\s+\(untrusted\s+metadata\)[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /From:\s*$[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
 
         // System execution messages
-        /System:.*Exec\s+completed[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /Pre-compaction\s+memory\s+flush[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /System:.*Exec\s+completed[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /Pre-compaction\s+memory\s+flush[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
 
         // Heartbeat and system messages
-        /HEARTBEAT_OK[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
-        /Read\s+HEARTBEAT\.md[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /HEARTBEAT_OK[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+        /Read\s+HEARTBEAT\.md[\s\S]*?(?=\n##|\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|$)/gi,
+
+        // Audio metadata markers (keep the transcript content)
+        /\[Audio\]\s*/gi,
+        /\[Voice\s+[Ii]nput\]\s*/gi,
+        /\[Transcript\s+[Ee]mpty\]\s*/gi,
+
+        // User text metadata (preserve actual content)
+        /User text:\s*/gi,
+        /\[Telegram[^\]]*\]\s*/gi,
+        /Transcript:\s*/gi,
 
         // Markdown headers (system-generated)
         /^\s*#{3,}.*?#{3,}\s*\n+/gm,
-        /^\s*##.*?\n+/gm,
+        /^\s*##\s*$/gm,
         /^\s*•.*?\n*/gm,
       ];
 

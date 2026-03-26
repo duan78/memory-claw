@@ -41,7 +41,8 @@
       "Bash(systemctl status:*)",
       "Read(//root/.openclaw/workspace/plugins/memory-claw/**)",
       "Bash(chmod +x /tmp/test-hooks.sh)",
-      "Bash(/tmp/test-hooks.sh)"
+      "Bash(/tmp/test-hooks.sh)",
+      "Bash(kill 3365452)"
     ]
   }
 }
