@@ -36,7 +36,12 @@
       "Bash(npx tsx:*)",
       "Bash(tee /tmp/test-production.log)",
       "mcp__web-reader__webReader",
-      "Bash(openclaw gateway:*)"
+      "Bash(openclaw gateway:*)",
+      "Bash(systemctl restart:*)",
+      "Bash(systemctl status:*)",
+      "Read(//root/.openclaw/workspace/plugins/memory-claw/**)",
+      "Bash(chmod +x /tmp/test-hooks.sh)",
+      "Bash(/tmp/test-hooks.sh)"
     ]
   }
 }

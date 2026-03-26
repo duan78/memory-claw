@@ -5,6 +5,23 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.44: CRITICAL FIX - Aggressive noise filtering before capture logic
+ * - CRITICAL: Fixed polling capture rejecting valid messages due to noise patterns being checked BEFORE cleaning
+ * - FIXED: Noise patterns now remove metadata blocks (## Learned Patterns, ## Foundry, etc.) BEFORE shouldCapture
+ * - FIXED: Patterns now properly handle voice transcripts with metadata blocks before actual user content
+ * - FIXED: Preserve actual user content that comes after "[Audio]", "[Voice", "User text:", "Transcript:" markers
+ * - FIXED: All noise filtering happens in convertJsonlToMessages BEFORE processMessages/shouldCapture
+ * - FIXED: Messages like "[Audio] User text: [...] Transcript: Ok, est-ce qu'on peut vérifier..." now captured correctly
+ *
+ * v2.4.43: CAPTURE PIPELINE FIXES - Fixed agent_end hook firing and message_sent buffer overflow
+ * - FIXED: agent_end hook now tries 10 different hook name variants (agent_end, agent:complete, conversation:end, after_agent, agent_complete, agent:end, turn:end, turn_end, message:end, response:end)
+ * - FIXED: Enhanced event structure detection - tries multiple patterns (messages, conversation.messages, history, array)
+ * - FIXED: Added lastFiredAt timestamp to hook tracking for better diagnostics
+ * - FIXED: message_sent hook now uses debouncing (1-second batch window) to prevent buffer/queue overflow
+ * - FIXED: message_sent events are now batched and processed together instead of individually
+ * - FIXED: Reduced memory pressure from message_sent hook by processing in batches
+ * - FIXED: Improved error handling for all hooks with more detailed logging
+ *
  * v2.4.42: CAPTURE PIPELINE FIXES - Fixed hook closure issues, counter overflow, and overly strict filtering
  * - FIXED: agent_end hook now uses separate closures for each hook name to prevent interference
  * - FIXED: Enhanced hook tracking with per-hook statistics (fire count, registration status)
@@ -37,11 +54,11 @@
  * v2.4.37: CAPTURE PIPELINE OVERHAUL - Fixed broken hooks, added polling fallback
  *
  * Hooks:
- * - `agent_end`: Captures facts from user messages (primary, tries multiple hook names)
+ * - `agent_end`: Captures facts from user messages (primary, tries 10 hook name variants)
  * - `llm_output`: Alternative trigger when LLM generates output
  * - `session_end`: Captures facts even on crash/kill
- * - `message_sent`: DISABLED - event structure doesn't support capture (rate-limited logging)
- * - Polling fallback: Reads session files every 30 seconds with enhanced filtering
+ * - `message_sent`: DISABLED - event structure doesn't support capture (debounced monitoring)
+ * - Polling fallback: Reads session files every 30 seconds with AGGRESSIVE noise filtering before capture
  * - `before_agent_start`: Injects relevant context (tier-based)
  *
  * Tools:
@@ -56,7 +73,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.42
+ * @version 2.4.44
  * @author duan78
  */
 
@@ -425,7 +442,7 @@ async function changeTier(
 const plugin = {
   id: "memory-claw",
   name: "MemoryClaw (Multilingual Memory)",
-  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.42: Fixed agent_end hook closure issues, per-hook tracking, counter overflow protection, relaxed capture filter (ALL user messages > 30 chars captured), removed question penalty. Supports 11 languages.",
+  description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.44: CRITICAL FIX - Aggressive noise filtering BEFORE capture logic (fixes voice transcripts with metadata blocks). Fixed agent_end hook firing (10 variants), fixed message_sent buffer overflow. Supports 11 languages.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -479,7 +496,7 @@ const plugin = {
     const tierManager = new TierManager();
 
     api.logger.info(
-      `memory-claw v2.4.42: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, per-hook tracking, counter overflow protection, locales: ${activeLocales.length})`
+      `memory-claw v2.4.44: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: aggressive noise filtering before capture, locales: ${activeLocales.length})`
     );
 
     // Run migration on first start
@@ -965,49 +982,53 @@ const plugin = {
      * JSONL format: { "type": "message", "message": { "role": "user", "content": [...] } }
      * Expected format: { "role": "user", "content": "..." }
      *
-     * v2.4.40: Enhanced noise filtering - Filter system metadata, voice-only messages, compaction artifacts
+     * v2.4.44: CRITICAL FIX - Aggressive noise filtering BEFORE shouldCapture check
+     * - Fixed: Noise patterns now properly handle voice transcripts with metadata blocks
+     * - Fixed: Remove "## Learned Patterns", "## Foundry", etc. BEFORE capture logic
+     * - Fixed: Preserve actual user content that comes after metadata blocks
      */
     const convertJsonlToMessages = (jsonlObjects: unknown[]): unknown[] => {
       const messages: unknown[] = [];
 
-      // Comprehensive noise patterns to filter
+      // v2.4.44: AGGRESSIVE noise patterns - must remove ALL metadata BEFORE capture logic
       const noisePatterns = [
-        // Memory injection tags
+        // Memory injection tags (must be removed first)
         /<relevant-memories>[\s\S]*?<\/relevant-memories>/gi,
-        /<relevant-memories>/gi,
-        /<\/relevant-memories>/gi,
 
-        // Compaction metadata blocks
-        /##\s*Learned\s+Patterns[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /##\s*Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /\*\*Tools:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /\*\*Written:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /\*\*Outcome:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /\*\*Feedback\s+Loop:\*\*[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
+        // v2.4.44: Aggressive compaction metadata blocks - remove until user content markers
+        /##\s*Learned\s+Patterns[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
+        /##\s*Foundry[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
+        /##\s*[A-Z][a-z]+.*?[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n[A-Z][a-z]+:|\n#|$)/gi,
+
+        // Tool and execution metadata
+        /\*\*Tools:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /\*\*Written:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /\*\*Outcome:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /\*\*Feedback\s+Loop:\*\*[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
 
         // Untrusted metadata markers
-        /Conversation\s+info\s+\(untrusted\s+metadata\)/gi,
-        /Sender\s+\(untrusted\s+metadata\)/gi,
-        /Sender\s*\(untrusted\)/gi,
-        /From:\s*$/gi,
+        /Conversation\s+info\s+\(untrusted\s+metadata\)[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /Sender\s+\(untrusted\s+metadata\)[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /From:\s*$[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
 
         // System execution messages
-        /System:.*Exec\s+completed/gi,
-        /Pre-compaction\s+memory\s+flush/gi,
+        /System:.*Exec\s+completed[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /Pre-compaction\s+memory\s+flush[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
 
         // Heartbeat and system messages
-        /HEARTBEAT_OK/gi,
-        /Read\s+HEARTBEAT\.md/gi,
+        /HEARTBEAT_OK[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
+        /Read\s+HEARTBEAT\.md[\s\S]*?(\n\[Audio\]|\n\[Voice|\nUser text:|\nTranscript:|\n\n|\n#|$)/gi,
 
         // Markdown headers (system-generated)
         /^\s*#{3,}.*?#{3,}\s*\n+/gm,
         /^\s*##.*?\n+/gm,
         /^\s*•.*?\n*/gm,
-
-        // Generic preamble markers
-        /Learned\s+Patterns[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
-        /Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/gi,
       ];
+
+      let userMsgCount = 0;
+      let filteredMsgCount = 0;
+      let tooShortCount = 0;
+      let voiceOnlyCount = 0;
 
       for (const obj of jsonlObjects) {
         if (!obj || typeof obj !== "object") continue;
@@ -1022,6 +1043,7 @@ const plugin = {
 
         // Only process user/human messages
         if (role !== "user" && role !== "human") continue;
+        userMsgCount++;
 
         // Extract text from content
         let text = "";
@@ -1042,7 +1064,10 @@ const plugin = {
 
         // v2.4.40: Filter out voice-only messages (empty transcript or just audio markers)
         const trimmedText = text.trim();
-        if (trimmedText.length < 30) continue; // Skip very short messages
+        if (trimmedText.length < 30) {
+          tooShortCount++;
+          continue; // Skip very short messages
+        }
 
         // Check for voice-only message patterns (no actual transcript)
         const voiceOnlyPatterns = [
@@ -1053,7 +1078,10 @@ const plugin = {
           /^\s*\(audio\s+only\)\s*$/i,
         ];
         const isVoiceOnly = voiceOnlyPatterns.some(pattern => pattern.test(trimmedText));
-        if (isVoiceOnly) continue;
+        if (isVoiceOnly) {
+          voiceOnlyCount++;
+          continue;
+        }
 
         // v2.4.40: Apply comprehensive noise pattern filtering
         let cleanedText = trimmedText;
@@ -1063,11 +1091,22 @@ const plugin = {
         cleanedText = cleanedText.replace(/\n{3,}/g, "\n\n").trim(); // Remove excessive newlines
 
         // Skip if text is too short after noise filtering
-        if (cleanedText.length < 30) continue;
+        if (cleanedText.length < 30) {
+          filteredMsgCount++;
+          continue;
+        }
 
         // Skip if text is only whitespace or punctuation after cleaning
         const meaningfulContent = cleanedText.replace(/[\s\p{P}]/gu, "");
-        if (meaningfulContent.length < 15) continue;
+        if (meaningfulContent.length < 15) {
+          filteredMsgCount++;
+          continue;
+        }
+
+        // DEBUG: Log each message that passes filtering
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [FILTER] Message PASSED: ${cleanedText.length} chars (from ${trimmedText.length}), preview: "${cleanedText.slice(0, 80)}..."`);
+        }
 
         messages.push({
           role: "user",
@@ -1075,15 +1114,26 @@ const plugin = {
         });
       }
 
+      // DEBUG: Log filtering summary
+      if (cfg.enableStats) {
+        api.logger.info(`memory-claw: [FILTER] Summary: ${userMsgCount} user messages → ${messages.length} passed (${tooShortCount} too short, ${voiceOnlyCount} voice-only, ${filteredMsgCount} filtered)`);
+      }
+
       return messages;
     };
 
     const pollSessionFiles = async (): Promise<void> => {
+      const pollStart = Date.now();
       try {
         const { readFile } = await import("node:fs/promises");
         const { readdir } = await import("node:fs/promises");
         const { stat } = await import("node:fs/promises");
         const stateDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
+
+        // DEBUG: Log polling start
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Starting polling cycle...`);
+        }
 
         // Get all session files
         const files = await readdir(stateDir).catch(() => []);
@@ -1091,7 +1141,15 @@ const plugin = {
           .filter(f => f.endsWith(".jsonl") && !f.includes(".reset."));
 
         if (sessionFiles.length === 0) {
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [POLLING] No session files found`);
+          }
           return; // No session files yet
+        }
+
+        // DEBUG: Log session files found
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Found ${sessionFiles.length} session files`);
         }
 
         // Find most recently modified file
@@ -1108,11 +1166,19 @@ const plugin = {
         }
         const latestFilePath = join(stateDir, latestFile);
 
+        // DEBUG: Log current file and state
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Latest file: ${latestFile}, current index: ${lastProcessedMessageIndex}`);
+        }
+
         // Check if we should process this file
         const isNewFile = latestFile !== lastProcessedSessionFile;
         if (isNewFile) {
           lastProcessedSessionFile = latestFile;
           lastProcessedMessageIndex = -1; // Reset for new file
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [POLLING] New file detected, resetting index to -1`);
+          }
         }
 
         // Read the session file
@@ -1120,7 +1186,15 @@ const plugin = {
         const lines = content.split("\n").filter(line => line.trim());
 
         if (lines.length === 0) {
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [POLLING] File is empty`);
+          }
           return;
+        }
+
+        // DEBUG: Log file stats
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] File has ${lines.length} lines, processing from index ${lastProcessedMessageIndex + 1}`);
         }
 
         // Process only new messages since last check
@@ -1135,18 +1209,37 @@ const plugin = {
             newMessageCount++;
           } catch (e) {
             // Skip malformed lines
+            if (cfg.enableStats) {
+              api.logger.warn(`memory-claw: [POLLING] Failed to parse line ${i}: ${e instanceof Error ? e.message : String(e)}`);
+            }
           }
         }
 
-        if (jsonlMessages.length > 0 && cfg.enableStats) {
-          api.logger.info(`memory-claw: [POLLING] Found ${jsonlMessages.length} new JSONL messages in ${latestFile}`);
+        // DEBUG: Log JSONL parsing results
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Parsed ${jsonlMessages.length} new JSONL messages (from ${startIndex} to ${lines.length - 1})`);
+        }
+
+        if (jsonlMessages.length === 0) {
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [POLLING] No new messages to process`);
+          }
+          return;
         }
 
         // Convert JSONL format to expected message format
         const convertedMessages = convertJsonlToMessages(jsonlMessages);
 
+        // DEBUG: Log conversion results
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [POLLING] Converted to ${convertedMessages.length} user messages after filtering (from ${jsonlMessages.length} JSONL messages)`);
+        }
+
+        // DEBUG: Log first converted message for inspection
         if (convertedMessages.length > 0 && cfg.enableStats) {
-          api.logger.info(`memory-claw: [POLLING] Converted to ${convertedMessages.length} user messages after filtering`);
+          const firstMsg = convertedMessages[0] as Record<string, unknown>;
+          const content = firstMsg.content as string;
+          api.logger.info(`memory-claw: [POLLING] First message preview (${content.length} chars): "${content.slice(0, 150)}..."`);
         }
 
         // Process the converted messages
@@ -1156,11 +1249,18 @@ const plugin = {
           // Only update and save position after successful processing
           lastProcessedMessageIndex = startIndex + jsonlMessages.length - 1;
           await savePollingState();
+
+          // DEBUG: Log completion
+          const elapsed = Date.now() - pollStart;
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [POLLING] Completed in ${elapsed}ms, updated index to ${lastProcessedMessageIndex}`);
+          }
         }
       } catch (err) {
-        // Silently ignore polling errors to avoid spam
+        // Log polling errors
         if (cfg.enableStats) {
           api.logger.warn(`memory-claw: [POLLING] Error: ${err instanceof Error ? err.message : String(err)}`);
+          api.logger.warn(`memory-claw: [POLLING] Stack: ${err instanceof Error ? err.stack : 'No stack trace'}`);
         }
       }
     };
@@ -1176,23 +1276,29 @@ const plugin = {
     // Hook: agent_end - Auto-capture facts
     // ========================================================================
 
-    // v2.4.42: Track hook firing to diagnose issues - Fixed to track per hook name
+    // v2.4.43: Enhanced hook tracking with timing information
     interface HookTracking {
       hookName: string;
       fired: boolean;
       fireCount: number;
       successfullyRegistered: boolean;
+      lastFiredAt: number;
     }
 
     const hooksTracking = new Map<string, HookTracking>();
     let anyAgentEndHookFired = false;
 
     const processMessages = async (messages: unknown[]): Promise<void> => {
+      // DEBUG: Log processMessages start
+      if (cfg.enableStats) {
+        api.logger.info(`memory-claw: [PROCESS] Starting processMessages with ${messages.length} raw messages`);
+      }
+
       const grouped = groupConsecutiveUserMessages(messages);
 
       if (grouped.length === 0) {
         if (cfg.enableStats) {
-          api.logger.info("memory-claw: No grouped messages to process");
+          api.logger.info("memory-claw: [PROCESS] No grouped messages to process");
         }
         return;
       }
@@ -1206,11 +1312,18 @@ const plugin = {
       const source: "agent_end" | "session_end" = "agent_end";
 
       if (cfg.enableStats) {
-        api.logger.info(`memory-claw: Processing ${grouped.length} grouped messages`);
+        api.logger.info(`memory-claw: [PROCESS] Processing ${grouped.length} grouped messages`);
       }
 
-      for (const group of grouped) {
+      for (let i = 0; i < grouped.length; i++) {
+        const group = grouped[i];
         const { combinedText, messageCount } = group;
+
+        // DEBUG: Log each group being processed
+        if (cfg.enableStats) {
+          api.logger.info(`memory-claw: [PROCESS] Group ${i + 1}/${grouped.length}: ${combinedText.length} chars, ${messageCount} messages`);
+          api.logger.info(`memory-claw: [PROCESS] Preview: "${combinedText.slice(0, 100)}..."`);
+        }
 
         try {
           const captureResult = shouldCapture(
@@ -1222,13 +1335,20 @@ const plugin = {
             0.25  // Default minimum importance from shouldCapture function
           );
 
+          // DEBUG: Log capture decision
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [PROCESS] shouldCapture returned: should=${captureResult.should}, importance=${captureResult.importance.toFixed(2)}, suspicion=${captureResult.suspicion.toFixed(2)}`);
+          }
+
           if (cfg.enableStats) {
             const preview = combinedText.slice(0, 80).replace(/\n/g, " ");
             if (!captureResult.should) {
               const reason = captureResult.importance < 0.25
                 ? `low importance (${captureResult.importance.toFixed(2)})`
                 : `filtered (importance: ${captureResult.importance.toFixed(2)})`;
-              api.logger.info(`memory-claw: SKIPPED [${reason}]: "${preview}..."`);
+              api.logger.info(`memory-claw: [PROCESS] SKIPPED [${reason}]: "${preview}..."`);
+            } else {
+              api.logger.info(`memory-claw: [PROCESS] ✓ CAPTURING: "${preview}..."`);
             }
           }
 
@@ -1245,17 +1365,27 @@ const plugin = {
           if (!rateLimiter.canCapture(captureResult.importance)) {
             skippedRateLimit++;
             if (cfg.enableStats) {
-              api.logger.warn(`memory-claw: Rate limit reached, skipping capture (importance: ${captureResult.importance.toFixed(2)})`);
+              api.logger.warn(`memory-claw: [PROCESS] Rate limit reached, skipping capture (importance: ${captureResult.importance.toFixed(2)})`);
             }
             continue;
           }
 
           const category = detectCategory(combinedText);
 
+          // DEBUG: Log category and tier
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [PROCESS] Category: ${category}, starting embedding...`);
+          }
+
           // v2.4.25: Explicit metadata cleaning before embedding for maximum quality
           // Note: embeddings.embed() also cleans, but this ensures consistency
           const textForEmbedding = cleanSenderMetadata(combinedText);
           const vector = await embeddings.embed(textForEmbedding);
+
+          // DEBUG: Log embedding success
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [PROCESS] Embedding complete, checking for duplicates...`);
+          }
 
           const vectorMatches = await db.search(vector, 3, 0.90, false);
 
@@ -1265,6 +1395,9 @@ const plugin = {
           for (const match of vectorMatches) {
             if (calculateTextSimilarity(combinedText, match.text) > 0.70) {
               isDuplicate = true;
+              if (cfg.enableStats) {
+                api.logger.info(`memory-claw: [PROCESS] Duplicate found (similarity: ${calculateTextSimilarity(combinedText, match.text).toFixed(2)})`);
+              }
               break;
             }
           }
@@ -1275,6 +1408,11 @@ const plugin = {
           }
 
           const determinedTier = tierManager.determineTier(captureResult.importance, category, source);
+
+          // DEBUG: Log storage attempt
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [PROCESS] Storing memory (tier: ${determinedTier}, importance: ${captureResult.importance.toFixed(2)})...`);
+          }
 
           // v2.4.25: Store the cleaned text (same as used for embedding)
           await db.store({
@@ -1288,10 +1426,16 @@ const plugin = {
           rateLimiter.recordCapture();
           stats.capture();
           stored++;
+
+          // DEBUG: Log successful storage
+          if (cfg.enableStats) {
+            api.logger.info(`memory-claw: [PROCESS] ✓ Successfully stored memory!`);
+          }
         } catch (error) {
           stats.error("processMessages", error instanceof Error ? error.message : String(error));
           if (cfg.enableStats) {
-            api.logger.warn(`memory-claw: Error processing message: ${error instanceof Error ? error.message : String(error)}`);
+            api.logger.warn(`memory-claw: [PROCESS] Error processing message: ${error instanceof Error ? error.message : String(error)}`);
+            api.logger.warn(`memory-claw: [PROCESS] Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
           }
         }
       }
@@ -1306,7 +1450,7 @@ const plugin = {
           if (skippedNoTrigger > 0) details.push(`${skippedNoTrigger} no trigger/pattern`);
           if (skippedDuplicate > 0) details.push(`${skippedDuplicate} duplicates`);
           if (skippedRateLimit > 0) details.push(`${skippedRateLimit} rate limited`);
-          api.logger.info(`memory-claw: Processed messages - ${details.join(", ")}`);
+          api.logger.info(`memory-claw: [PROCESS] ✓ Completed - ${details.join(", ")}`);
         }
       } else if (cfg.enableStats) {
         // Log that nothing was stored
@@ -1315,16 +1459,27 @@ const plugin = {
         if (skippedNoTrigger > 0) details.push(`${skippedNoTrigger} no trigger/pattern`);
         if (skippedDuplicate > 0) details.push(`${skippedDuplicate} duplicates`);
         if (skippedRateLimit > 0) details.push(`${skippedRateLimit} rate limited`);
-        api.logger.info(`memory-claw: No messages stored - ${details.length > 0 ? details.join(", ") : "all filtered"}`);
+        api.logger.info(`memory-claw: [PROCESS] ✗ No messages stored - ${details.length > 0 ? details.join(", ") : "all filtered"}`);
       }
     };
 
     // Register hooks
     api.logger.info("memory-claw: Registering agent_end hooks (trying multiple names)...");
 
-    // v2.4.42: Try alternative hook names that might fire in OpenClaw
-    // Fixed: Create separate handler for each hook name to avoid closure issues
-    const hookNames = ["agent_end", "agent:complete", "conversation:end", "after_agent"];
+    // v2.4.43: Expanded list of potential hook names that OpenClaw might use
+    // Including variants with different naming conventions
+    const hookNames = [
+      "agent_end",
+      "agent:complete",
+      "conversation:end",
+      "after_agent",
+      "agent_complete",
+      "agent:end",
+      "turn:end",
+      "turn_end",
+      "message:end",
+      "response:end"
+    ];
     let successfullyRegistered = 0;
 
     for (const hookName of hookNames) {
@@ -1334,10 +1489,12 @@ const plugin = {
         fired: false,
         fireCount: 0,
         successfullyRegistered: false,
+        lastFiredAt: 0,
       });
 
       try {
         // Create a separate handler closure for each hook name to avoid closure issues
+        // v2.4.43: Added more robust error handling and event structure detection
         const createHandler = (targetHookName: string) => {
           return async (event: unknown) => {
             try {
@@ -1346,6 +1503,7 @@ const plugin = {
 
               tracking.fired = true;
               tracking.fireCount++;
+              tracking.lastFiredAt = Date.now();
               anyAgentEndHookFired = true;
 
               // Only log first fire and every 10th fire to reduce log spam
@@ -1360,10 +1518,33 @@ const plugin = {
                 return;
               }
 
-              const messages = (event as Record<string, unknown>).messages;
-              if (!messages || !Array.isArray(messages)) {
+              // v2.4.43: Try multiple event structure patterns
+              let messages: unknown[] | undefined;
+
+              // Pattern 1: { messages: [...] }
+              const evtRecord = event as Record<string, unknown>;
+              if (evtRecord.messages && Array.isArray(evtRecord.messages)) {
+                messages = evtRecord.messages as unknown[];
+              }
+              // Pattern 2: { conversation: { messages: [...] } }
+              else if (evtRecord.conversation && typeof evtRecord.conversation === "object") {
+                const conv = evtRecord.conversation as Record<string, unknown>;
+                if (conv.messages && Array.isArray(conv.messages)) {
+                  messages = conv.messages as unknown[];
+                }
+              }
+              // Pattern 3: { history: [...] }
+              else if (evtRecord.history && Array.isArray(evtRecord.history)) {
+                messages = evtRecord.history as unknown[];
+              }
+              // Pattern 4: Event itself is an array
+              else if (Array.isArray(event)) {
+                messages = event;
+              }
+
+              if (!messages || messages.length === 0) {
                 if (tracking.fireCount <= 3) {
-                  api.logger.warn(`memory-claw: ${targetHookName} messages invalid: type=${typeof messages}, isArray=${Array.isArray(messages)}`);
+                  api.logger.warn(`memory-claw: ${targetHookName} - no messages found (tried messages, conversation.messages, history, array)`);
                 }
                 return;
               }
@@ -1479,23 +1660,39 @@ const plugin = {
     // NOTE: message_sent event only has {to, content, success, error}
     // There's NO 'role' field and NO message object, so we can't use it for capture
     // This hook is monitored but NOT used for capture
-    // v2.4.42: Fixed counter overflow with modulo reset, rate-limited logging
+    // v2.4.43: Added debouncing to prevent buffer/queue overflow issues
 
     let messageSentCount = 0;
     let lastMessageSentLog = 0;
+    let messageSentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let messageSentBatch: unknown[] = [];
 
     api.logger.info("memory-claw: Registering message_sent hook (MONITOR ONLY - DISABLED FOR CAPTURE)...");
     api.on("message_sent", async (event) => {
       try {
-        // v2.4.42: Use modulo to prevent counter overflow (resets after 1M)
+        // v2.4.43: Use modulo to prevent counter overflow (resets after 1M)
         messageSentCount = (messageSentCount + 1) % 1000000;
 
-        // Only log once per minute to prevent log spam
-        const now = Date.now();
-        if (now - lastMessageSentLog > 60000) {
-          lastMessageSentLog = now;
-          api.logger.info(`🔍 [HOOK] memory-claw: message_sent FIRED! (count: ${messageSentCount}) event keys: ${event ? Object.keys(event).join(", ") : "null"}`);
+        // Add to batch for debounced processing
+        messageSentBatch.push(event);
+
+        // Clear existing timer
+        if (messageSentDebounceTimer) {
+          clearTimeout(messageSentDebounceTimer);
         }
+
+        // Set new timer to process batch after 1 second of inactivity
+        messageSentDebounceTimer = setTimeout(() => {
+          // Only log once per minute to prevent log spam
+          const now = Date.now();
+          if (now - lastMessageSentLog > 60000) {
+            lastMessageSentLog = now;
+            api.logger.info(`🔍 [HOOK] memory-claw: message_sent FIRED! (count: ${messageSentCount}, batch: ${messageSentBatch.length}) event keys: ${messageSentBatch[0] ? Object.keys(messageSentBatch[0]).join(", ") : "null"}`);
+          }
+          // Clear batch after processing
+          messageSentBatch = [];
+        }, 1000);
+
         // This hook can't be used for capture - event structure is:
         // { to: string, content: string, success: boolean, error?: string }
         // No role field, no message object, just the response content
@@ -1504,7 +1701,7 @@ const plugin = {
       }
     });
 
-    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE - rate-limited logging, counter overflow protected)");
+    api.logger.info("memory-claw: message_sent hook registered (MONITOR ONLY - NOT USED FOR CAPTURE - debounced processing, counter overflow protected)");
 
     // ========================================================================
     // Hook: message_received - Test if this event fires

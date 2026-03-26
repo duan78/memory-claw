@@ -1,5 +1,8 @@
 /**
- * Memory Claw v2.4.29 - Configuration Constants
+ * Memory Claw v2.4.42 - Configuration Constants
+ *
+ * v2.4.42 improvements:
+ * - No changes to config (version bump for capture filter fixes)
  *
  * v2.4.29 improvements:
  * - No changes to config (version bump for code cleanup)
@@ -8,7 +11,7 @@
  * - FIXED: Added gcMinImportance (0.2) and gcMinHitCount (1) to DEFAULT_CONFIG
  * - FIXED: GC thresholds now match capture thresholds to prevent memory loss
  *
- * @version 2.4.29
+ * @version 2.4.42
  * @author duan78
  */
 import { join } from "node:path";
