@@ -373,7 +373,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.33: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, PATTERNS DISABLED - FIXING ROLE PREFIX MATCHING, locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.37: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, polling fallback enabled, DEBUG logging active, locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -741,16 +741,28 @@ const plugin = {
             try {
                 const { readFile } = await import("node:fs/promises");
                 const { readdir } = await import("node:fs/promises");
-                const stateDir = join(homedir(), ".openclaw", "state");
-                // Get all session files, sorted by modification time (newest first)
+                const { stat } = await import("node:fs/promises");
+                const stateDir = join(homedir(), ".openclaw", "agents", "main", "sessions");
+                // Get all session files
                 const files = await readdir(stateDir).catch(() => []);
                 const sessionFiles = files
-                    .filter(f => f.startsWith("session-") && f.endsWith(".jsonl"))
-                    .sort((a, b) => b.localeCompare(a)); // Newest first
+                    .filter(f => f.endsWith(".jsonl") && !f.includes(".reset."));
                 if (sessionFiles.length === 0) {
                     return; // No session files yet
                 }
-                const latestFile = sessionFiles[0];
+                // Find most recently modified file
+                let latestFile = sessionFiles[0];
+                let latestMtime = 0;
+                for (const f of sessionFiles) {
+                    try {
+                        const s = await stat(join(stateDir, f));
+                        if (s.mtimeMs > latestMtime) {
+                            latestMtime = s.mtimeMs;
+                            latestFile = f;
+                        }
+                    }
+                    catch { }
+                }
                 const latestFilePath = join(stateDir, latestFile);
                 // Check if we should process this file
                 const isNewFile = latestFile !== lastProcessedSessionFile;
