@@ -1,5 +1,9 @@
 /**
- * Memory Claw v2.4.27 - Text Processing Utilities
+ * Memory Claw v2.4.45 - Text Processing Utilities
+ *
+ * v2.4.45 improvements:
+ * - Added Phase 11.2: Convert analyzer types to storage types
+ * - Normalizes category/type mentions for consistency in storage
  *
  * v2.4.27 improvements:
  * - Enhanced metadata cleaning with more aggressive patterns
@@ -8,7 +12,7 @@
  * - Better detection and removal of tool/system artifacts
  * - Added patterns for Claude-specific metadata formats
  *
- * @version 2.4.27
+ * @version 2.4.45
  * @author duan78
  */
 
@@ -225,6 +229,31 @@ export function cleanSenderMetadata(text: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+
+  // Phase 11.2: Convert analyzer types to storage types
+  // Normalizes category/type mentions to ensure consistency in storage
+  cleaned = cleaned
+    // Normalize category mentions
+    .replace(/\b(entite|entité|entities)\b/gi, "entity")
+    .replace(/\b(pref|prefs|setting|settings|config|configuration)\b/gi, "preference")
+    .replace(/\b(dec|choice)\b/gi, "decision")
+    .replace(/\b(tech|technicality)\b/gi, "technical")
+    .replace(/\b(process|procedure)\b/gi, "workflow")
+    .replace(/\b(troubleshoot|diagnostic)\b/gi, "debug")
+    .replace(/\b(search.*engine.*optimization|keyword.*research)\b/gi, "seo")
+    .replace(/\b(information|info)\b/gi, "fact")
+    .replace(/\b(misc|miscellaneous|general)\b/gi, "other")
+
+    // Normalize tier mentions
+    .replace(/\b(core.*memory|permanent|long.*term)\b/gi, "core")
+    .replace(/\b(medium.*term)\b/gi, "contextual")
+    .replace(/\b(temporary|short.*term)\b/gi, "episodic")
+
+    // Normalize source mentions
+    .replace(/\b(automatic|automated)\b/gi, "auto-capture")
+    .replace(/\b(agent.*complete)\b/gi, "agent_end")
+    .replace(/\b(session.*complete|end.*of.*session)\b/gi, "session_end")
+    .replace(/\b(hand.*crafted|user.*input)\b/gi, "manual");
 
   return cleaned;
 }
