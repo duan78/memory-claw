@@ -1,5 +1,12 @@
 /**
- * Memory Claw v2.4.21 - Capture Utilities
+ * Memory Claw v2.4.42 - Capture Utilities
+ *
+ * v2.4.42: Relaxed filtering for user messages - FIXED overly strict capture
+ * - FIXED: For user messages (agent_end, session_end): Always capture if > 30 chars
+ * - FIXED: Removed importance threshold check for user messages
+ * - FIXED: User questions are no longer penalized (removed -0.2 question penalty)
+ * - FIXED: Keep filtering for system metadata, JSON blocks, and injection attempts
+ * - FIXED: Deduplication (0.70 threshold) handles true duplicates
  *
  * v2.4.21: Enhanced metadata cleaning and capture quality
  * - Added more system artifact patterns to metadata cleaning
@@ -30,7 +37,7 @@
  *
  * v2.4.3: Relaxed trigger requirements - triggers now boost importance instead of being required
  *
- * @version 2.4.21
+ * @version 2.4.42
  * @author duan78
  */
 import { normalizeText } from "./text.js";
@@ -335,10 +342,12 @@ export function isJsonMetadata(text) {
 }
 /**
  * Production capture function with proper filtering thresholds.
- * v2.4.15: Enhanced filtering for JSON blocks, system messages, and 30-char minimum.
+ * v2.4.42: Relaxed filtering for user messages - capture all user content > 30 chars
+ * - User messages (agent_end, session_end): Always capture if they pass basic checks
+ * - System metadata, injection attempts, and JSON blocks are still filtered
+ * - Importance threshold only applies to auto-capture sources
  */
-export function shouldCapture(text, minChars, maxChars, category, source = "auto-capture", minImportance = 0.25 // v2.4.17: Lowered from 0.30 to 0.25 for better factual content capture
-) {
+export function shouldCapture(text, minChars, maxChars, category, source = "auto-capture", minImportance = 0.25) {
     if (!text || typeof text !== "string") {
         return { should: false, importance: 0.5, suspicion: 0 };
     }
@@ -352,35 +361,25 @@ export function shouldCapture(text, minChars, maxChars, category, source = "auto
     if (isJsonMetadata(normalized)) {
         return { should: false, importance: 0.5, suspicion: 0 };
     }
-    // Injection check
+    // Injection check - always reject suspicious content regardless of source
     const suspicion = calculateInjectionSuspicion(normalized);
     if (suspicion > 0.5) {
         return { should: false, importance: 0.5, suspicion };
     }
-    // v2.4.32: TEMPORARILY disabled skip patterns check
-    // These were blocking all messages due to role prefix matching (user:, assistant:, etc.)
-    // TODO: Re-enable with patterns that don't match role prefixes
-    /*
-    if (getAllSkipPatterns().some((p) => p.test(normalized))) {
-      return { should: false, importance: 0.5, suspicion };
-    }
-    */
-    // v2.4.32: TEMPORARILY disabled low value patterns check
-    // These were blocking legitimate messages
-    // TODO: Re-enable with more specific patterns
-    /*
-    if (getAllLowValuePatterns().some((p) => p.test(normalized))) {
-      return { should: false, importance: 0.5, suspicion };
-    }
-    */
-    // Calculate importance
+    // Calculate importance for scoring and deduplication purposes
     const detectedCategory = category || detectCategory(normalized);
     let importance = calculateImportance(normalized, detectedCategory, source);
     // Trigger patterns boost importance
     if (getAllTriggers().some((r) => r.test(normalized))) {
         importance = Math.min(1.0, importance + 0.15);
     }
-    // Importance threshold check
+    // v2.4.42: For user messages (agent_end, session_end), capture all content that passes basic checks
+    // User messages represent real user intent and context - don't filter by importance
+    const isUserMessage = source === "agent_end" || source === "session_end";
+    if (isUserMessage) {
+        return { should: true, importance, suspicion };
+    }
+    // For auto-capture sources, apply importance threshold
     if (importance < minImportance) {
         return { should: false, importance, suspicion };
     }

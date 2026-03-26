@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.40",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.40: Enhanced capture filtering - Comprehensive noise pattern filtering, voice-only message detection, lowered deduplication threshold from 0.85 to 0.70, improved quality scoring.",
+  "version": "2.4.42",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.42: Fixed hook closure issues, counter overflow, relaxed capture filter (ALL user messages > 30 chars captured), removed question penalty.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",

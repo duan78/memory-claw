@@ -1,7 +1,9 @@
 /**
- * Memory Claw v2.4.0 - Importance Calculation Utilities
+ * Memory Claw v2.4.42 - Importance Calculation Utilities
  *
- * @version 2.4.0
+ * v2.4.42: Removed question penalty - user questions are valuable context
+ *
+ * @version 2.4.42
  * @author duan78
  */
 
@@ -71,10 +73,8 @@ export function calculateImportance(
     importance += 0.05;
   }
 
-  // Penalty for questions (uncertainty)
-  if (/\?$/.test(trimmed) || /^(?:quoi|qui|où|comment|pourquoi|what|where|when|how|why)/i.test(normalized)) {
-    importance -= 0.2;
-  }
+  // v2.4.42: REMOVED question penalty - user questions are valuable context
+  // Questions are no longer penalized as they represent user intent and information needs
 
   // Penalty for vague expressions
   if (/^(?:je pense|je crois|il me semble|maybe|perhaps|probably)\b/i.test(normalized)) {
