@@ -82,23 +82,22 @@ export class MemoryDB {
           console.warn(`memory-claw: Vector dimension mismatch detected! Expected ${this.vectorDim}D, found ${actualDim}D. Recreating table...`);
           // Drop the old table
           await this.db.dropTable(TABLE_NAME);
-          // Create new table with correct dimension
-          this.table = await this.db.createTable(TABLE_NAME, [
-            {
-              id: "__schema__",
-              text: "",
-              vector: Array.from({ length: this.vectorDim }).fill(0),
-              importance: 0,
-              category: "other",
-              tier: "episodic",
-              tags: [""],  // Non-empty array to force string[] type inference
-              createdAt: 0,
-              updatedAt: 0,
-              lastAccessed: 0,
-              source: "manual",
-              hitCount: 0,
-            },
-          ]);
+          // Create new table with correct dimension using Float32Array
+          const schemaData = [{
+            id: "__schema__",
+            text: "",
+            vector: new Float32Array(this.vectorDim),
+            importance: 0,
+            category: "other",
+            tier: "episodic",
+            tags: [""],  // Non-empty array to force string[] type inference
+            createdAt: 0,
+            updatedAt: 0,
+            lastAccessed: 0,
+            source: "manual",
+            hitCount: 0,
+          }];
+          this.table = await this.db.createTable(TABLE_NAME, schemaData);
           await this.table.delete('id = "__schema__"');
           console.warn(`memory-claw: Table recreated with correct vector dimension (${this.vectorDim}D)`);
           return;
@@ -108,22 +107,22 @@ export class MemoryDB {
       // Migration: Add tier field to existing tables (v2.3.0+)
       await this.migrateTierField();
     } else {
-      this.table = await this.db.createTable(TABLE_NAME, [
-        {
-          id: "__schema__",
-          text: "",
-          vector: Array.from({ length: this.vectorDim }).fill(0),
-          importance: 0,
-          category: "other",
-          tier: "episodic",
-          tags: [""],  // Non-empty array to force string[] type inference
-          createdAt: 0,
-          updatedAt: 0,
-          lastAccessed: 0,
-          source: "manual",
-          hitCount: 0,
-        },
-      ]);
+      // Create table with Float32Array for proper vector type inference
+      const schemaData = [{
+        id: "__schema__",
+        text: "",
+        vector: new Float32Array(this.vectorDim),
+        importance: 0,
+        category: "other",
+        tier: "episodic",
+        tags: [""],  // Non-empty array to force string[] type inference
+        createdAt: 0,
+        updatedAt: 0,
+        lastAccessed: 0,
+        source: "manual",
+        hitCount: 0,
+      }];
+      this.table = await this.db.createTable(TABLE_NAME, schemaData);
       await this.table.delete('id = "__schema__"');
     }
   }

@@ -78,12 +78,11 @@ export class MemoryDB {
                     console.warn(`memory-claw: Vector dimension mismatch detected! Expected ${this.vectorDim}D, found ${actualDim}D. Recreating table...`);
                     // Drop the old table
                     await this.db.dropTable(TABLE_NAME);
-                    // Create new table with correct dimension
-                    this.table = await this.db.createTable(TABLE_NAME, [
-                        {
+                    // Create new table with correct dimension using Float32Array
+                    const schemaData = [{
                             id: "__schema__",
                             text: "",
-                            vector: Array.from({ length: this.vectorDim }).fill(0),
+                            vector: new Float32Array(this.vectorDim),
                             importance: 0,
                             category: "other",
                             tier: "episodic",
@@ -93,8 +92,8 @@ export class MemoryDB {
                             lastAccessed: 0,
                             source: "manual",
                             hitCount: 0,
-                        },
-                    ]);
+                        }];
+                    this.table = await this.db.createTable(TABLE_NAME, schemaData);
                     await this.table.delete('id = "__schema__"');
                     console.warn(`memory-claw: Table recreated with correct vector dimension (${this.vectorDim}D)`);
                     return;
@@ -104,11 +103,11 @@ export class MemoryDB {
             await this.migrateTierField();
         }
         else {
-            this.table = await this.db.createTable(TABLE_NAME, [
-                {
+            // Create table with Float32Array for proper vector type inference
+            const schemaData = [{
                     id: "__schema__",
                     text: "",
-                    vector: Array.from({ length: this.vectorDim }).fill(0),
+                    vector: new Float32Array(this.vectorDim),
                     importance: 0,
                     category: "other",
                     tier: "episodic",
@@ -118,8 +117,8 @@ export class MemoryDB {
                     lastAccessed: 0,
                     source: "manual",
                     hitCount: 0,
-                },
-            ]);
+                }];
+            this.table = await this.db.createTable(TABLE_NAME, schemaData);
             await this.table.delete('id = "__schema__"');
         }
     }
