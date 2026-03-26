@@ -39,7 +39,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.37
+ * @version 2.4.38
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -328,7 +328,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.37: CRITICAL FIX - message_sent hook broken (event has no role), agent_end unreliable. Added 30-second polling fallback that reads session files directly. Comprehensive DEBUG logging added to all hooks to identify what fires. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.38: CRITICAL FIX - Added convertJsonlToMessages() to transform session file format. Polling now correctly extracts user messages from JSONL, cleans preamble metadata (Learned Patterns, Foundry), filters for role=user/human, and converts content arrays to text. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -373,7 +373,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.37: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, polling fallback enabled, DEBUG logging active, locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.38: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, JSONL conversion enabled, polling fallback active, locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -737,6 +737,67 @@ const plugin = {
         // Reads the latest session file and processes any new user messages
         let lastProcessedSessionFile = null;
         let lastProcessedMessageIndex = -1;
+        /**
+         * Convert JSONL session format to agent_end message format
+         * JSONL format: { "type": "message", "message": { "role": "user", "content": [...] } }
+         * Expected format: { "role": "user", "content": "..." }
+         */
+        const convertJsonlToMessages = (jsonlObjects) => {
+            const messages = [];
+            for (const obj of jsonlObjects) {
+                if (!obj || typeof obj !== "object")
+                    continue;
+                const jsonlMsg = obj;
+                // Extract the nested message object
+                const nestedMsg = jsonlMsg.message;
+                if (!nestedMsg)
+                    continue;
+                const role = nestedMsg.role;
+                const content = nestedMsg.content;
+                // Only process user/human messages
+                if (role !== "user" && role !== "human")
+                    continue;
+                // Extract text from content
+                let text = "";
+                if (typeof content === "string") {
+                    text = content;
+                }
+                else if (Array.isArray(content)) {
+                    // Content is an array of {type, text} objects
+                    for (const block of content) {
+                        if (!block || typeof block !== "object")
+                            continue;
+                        const blockObj = block;
+                        if (blockObj.type === "text" && typeof blockObj.text === "string") {
+                            text += blockObj.text + " ";
+                        }
+                    }
+                }
+                if (!text || typeof text !== "string")
+                    continue;
+                // Clean preamble metadata (Learned Patterns, Foundry, etc.)
+                // These are system-generated prefixes that appear in every message
+                const preamblePatterns = [
+                    /Learned Patterns:[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/i,
+                    /Foundry[\s\S]*?(?=\n\n|\n[A-Z]|\n#|$)/i,
+                    /^\s*#{3,}.*?#{3,}\s*\n+/gm, // Markdown headers
+                    /^\s*##.*?\n+/gm, // Level 2 headers
+                    /^\s*•.*?\n*/gm, // Bullet points
+                ];
+                let cleanedText = text.trim();
+                for (const pattern of preamblePatterns) {
+                    cleanedText = cleanedText.replace(pattern, "\n");
+                }
+                cleanedText = cleanedText.replace(/\n{3,}/g, "\n\n").trim(); // Remove excessive newlines
+                if (cleanedText.length < 30)
+                    continue; // Skip very short messages
+                messages.push({
+                    role: "user",
+                    content: cleanedText,
+                });
+            }
+            return messages;
+        };
         const pollSessionFiles = async () => {
             try {
                 const { readFile } = await import("node:fs/promises");
@@ -778,23 +839,28 @@ const plugin = {
                 }
                 // Process only new messages since last check
                 const startIndex = lastProcessedMessageIndex + 1;
-                const newMessages = [];
+                const jsonlMessages = [];
                 for (let i = startIndex; i < lines.length; i++) {
                     try {
                         const msg = JSON.parse(lines[i]);
-                        newMessages.push(msg);
+                        jsonlMessages.push(msg);
                         lastProcessedMessageIndex = i;
                     }
                     catch (e) {
                         // Skip malformed lines
                     }
                 }
-                if (newMessages.length > 0 && cfg.enableStats) {
-                    api.logger.info(`memory-claw: [POLLING] Found ${newMessages.length} new messages in ${latestFile}`);
+                if (jsonlMessages.length > 0 && cfg.enableStats) {
+                    api.logger.info(`memory-claw: [POLLING] Found ${jsonlMessages.length} new JSONL messages in ${latestFile}`);
                 }
-                // Process the new messages
-                if (newMessages.length > 0) {
-                    await processMessages(newMessages);
+                // Convert JSONL format to expected message format
+                const convertedMessages = convertJsonlToMessages(jsonlMessages);
+                if (convertedMessages.length > 0 && cfg.enableStats) {
+                    api.logger.info(`memory-claw: [POLLING] Converted to ${convertedMessages.length} user messages after filtering`);
+                }
+                // Process the converted messages
+                if (convertedMessages.length > 0) {
+                    await processMessages(convertedMessages);
                 }
             }
             catch (err) {

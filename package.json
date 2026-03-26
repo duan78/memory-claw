@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.37",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.37: CRITICAL FIX - message_sent hook broken (event has no role field), agent_end unreliable. Added 30-second polling fallback that reads session files directly. Comprehensive DEBUG logging added to all hooks to identify what fires.",
+  "version": "2.4.38",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.38: CRITICAL FIX - Added convertJsonlToMessages() to transform session file format. Polling now correctly extracts user messages from JSONL, cleans preamble metadata, filters for role=user/human, and converts content arrays to text.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
