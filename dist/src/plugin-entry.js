@@ -56,7 +56,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.33
+ * @version 2.4.35
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -345,7 +345,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.33: CRITICAL FIX - Disabled skip/low-value patterns that blocked all messages. Root cause: patterns matched role prefixes. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.35: CRITICAL FIX - Changed message_sent buffer from 10 to 1 (process on every user message). Added 60-second fallback timer. Fixes capture pipeline when agent_end hook doesn't fire. Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -953,19 +953,45 @@ const plugin = {
         // ========================================================================
         // NOTE: agent_end event appears to not be fired in current OpenClaw version
         // Using message_sent as a workaround to capture messages after they're sent
+        // v2.4.35: CRITICAL FIX - Changed buffer from 10 to 1 (process on every user message)
+        // Added 60-second fallback timer to force process buffer
         api.logger.info("memory-claw: Registering message_sent hook (agent_end workaround)...");
         const messageBuffer = [];
+        let lastProcessTime = Date.now();
+        const BUFFER_SIZE = 1; // Process on every user message
+        const FALLBACK_TIMEOUT_MS = 60000; // 60 seconds
+        // Fallback timer: process buffer if no hook fires for 60 seconds
+        const fallbackTimer = setInterval(async () => {
+            if (messageBuffer.length > 0 && Date.now() - lastProcessTime >= FALLBACK_TIMEOUT_MS) {
+                api.logger.info(`⏰ [FALLBACK] memory-claw: Processing ${messageBuffer.length} buffered messages after timeout`);
+                try {
+                    await processMessages(messageBuffer);
+                    lastProcessTime = Date.now();
+                }
+                catch (err) {
+                    stats.error("message_sent_fallback", err instanceof Error ? err.message : String(err));
+                }
+                messageBuffer.length = 0;
+            }
+        }, FALLBACK_TIMEOUT_MS);
         api.on("message_sent", async (event) => {
             try {
                 api.logger.info(`🔍 [DEBUG] memory-claw: message_sent hook FIRED!`);
-                // Collect messages and process periodically
+                // Collect messages and process immediately on every user message
                 if (event && typeof event === "object") {
-                    messageBuffer.push(event);
-                    // Process every 10 messages or when we have user messages
-                    if (messageBuffer.length >= 10) {
-                        api.logger.info(`🔍 [DEBUG] memory-claw: Processing ${messageBuffer.length} buffered messages`);
-                        await processMessages(messageBuffer);
-                        messageBuffer.length = 0; // Clear buffer
+                    const evtObj = event;
+                    const role = evtObj.role;
+                    // Only buffer user messages for capture
+                    if (role === "user") {
+                        messageBuffer.push(event);
+                        api.logger.info(`📥 [DEBUG] memory-claw: Buffered user message (buffer size: ${messageBuffer.length})`);
+                        // Process immediately when we reach buffer size (1 = every user message)
+                        if (messageBuffer.length >= BUFFER_SIZE) {
+                            api.logger.info(`🔍 [DEBUG] memory-claw: Processing ${messageBuffer.length} buffered messages`);
+                            await processMessages(messageBuffer);
+                            lastProcessTime = Date.now();
+                            messageBuffer.length = 0; // Clear buffer
+                        }
                     }
                 }
             }
@@ -974,7 +1000,7 @@ const plugin = {
                 api.logger.warn(`memory-claw: message_sent hook failed: ${String(err)}`);
             }
         });
-        api.logger.info("memory-claw: message_sent hook registered successfully (agent_end workaround)");
+        api.logger.info("memory-claw: message_sent hook registered successfully (agent_end workaround, buffer=1, fallback=60s)");
         // ========================================================================
         // Hook: message_received - Test if this event fires
         // ========================================================================

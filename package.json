@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.34",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.34: CRITICAL FIX - Added encoding_format:'float' to Mistral API requests to ensure 1024D embeddings (was defaulting to 256D, causing dimension mismatch errors). v2.4.33: Disabled SKIP_PATTERNS and LOW_VALUE_PATTERNS that were blocking all messages.",
+  "version": "2.4.35",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.35: CRITICAL FIX - Changed message_sent buffer from 10 to 1 (process on every user message). Added 60-second fallback timer. Fixes capture pipeline when agent_end hook doesn't fire.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
