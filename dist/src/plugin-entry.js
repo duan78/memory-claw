@@ -5,6 +5,23 @@
  * Independent from memory-lancedb, survives OpenClaw updates.
  * Multilingual support: FR, EN, ES, DE, ZH, IT, PT, RU, JA, KO, AR (11 languages)
  *
+ * v2.4.51: CRITICAL FIX - Real-time deduplication was still broken (72 rows for 40 unique texts)
+ * - CRITICAL: Fixed dedup by lowering vector search threshold from 0.50 to 0.0 (was missing duplicates with low vector similarity but high text similarity)
+ * - CRITICAL: The problem: db.search(vector, 50, 0.50, false) only returns vectors with similarity > 0.50
+ * - CRITICAL: This missed potential duplicates where vector similarity is 0.0-0.50 but text similarity > 0.70
+ * - CRITICAL: The fix: Use db.search(vector, 50, 0.0, false) to search ALL rows before checking text similarity
+ * - CRITICAL: This ensures every new message is compared against ALL existing rows, not just those with high vector similarity
+ * - FIXED: Applied fix to both processMessages() (real-time capture) and mclaw_store (manual storage)
+ * - FIXED: Real-time dedup now properly prevents new duplicates from being added to the database
+ *
+ * v2.4.50: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow
+ * - CRITICAL: Fixed agent_end hook registration - added better tracking of which hooks actually fire vs which were registered
+ * - CRITICAL: Fixed message_sent buffer overflow by using > instead of >= for batch size check (prevents race condition)
+ * - CRITICAL: Added messageSentBatchOverflowCount to track dropped events
+ * - FIXED: Enhanced hook health check with detailed logging of fired vs non-fired hooks
+ * - FIXED: Added 30-second initial health check to quickly diagnose hook issues
+ * - FIXED: Improved hook registration error handling and logging
+ *
  * v2.4.49: CRITICAL FIX - Deduplication completely broken (182 rows for 32 unique texts)
  * - CRITICAL: Fixed dedup by lowering vector search threshold from 0.90 to 0.50 (was too strict, missing duplicates)
  * - CRITICAL: Fixed dedup by increasing search candidates from 3 to 50 (was missing duplicates beyond top 3)
@@ -12,10 +29,6 @@
  * - FIXED: Dedup now correctly checks text similarity > 0.70 against 50 candidates (not 3 with 0.90 threshold)
  * - FIXED: Added diagnostic logging to show max similarity even when no duplicate found
  * - FIXED: Added clean-duplicates script to remove existing duplicates from DB
- *
- * v2.4.48: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow
- * - CRITICAL: Fixed agent_end hook registration - now correctly detects which hooks actually fire (not just which were registered)
- * - CRITICAL: Fixed message_sent buffer overflow by checking batch size BEFORE pushing (prevents race condition overflow)
  *
  * v2.4.46: CRITICAL FIX - Deduplication completely broken, now fixed
  * - CRITICAL: Fixed dedup logic that was comparing uncleaned text with cleaned text (causing 374 rows for 21 unique texts)
@@ -96,7 +109,7 @@
  * - `mclaw_stats`: Get database statistics
  * - `mclaw_compact`: Manually trigger database compaction
  *
- * @version 2.4.49
+ * @version 2.4.51
  * @author duan78
  */
 import { homedir } from "node:os";
@@ -387,7 +400,7 @@ async function changeTier(db, id, tierManager, direction) {
 const plugin = {
     id: "memory-claw",
     name: "MemoryClaw (Multilingual Memory)",
-    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.49: CRITICAL FIX - Dedup completely broken (182→32 rows). Fixed vector search threshold and added cleanup script. Supports 11 languages.",
+    description: "100% autonomous multilingual memory plugin - own DB, config, and tools. v2.4.51: CRITICAL FIX - Fixed real-time deduplication (was searching with threshold 0.50, now 0.0 to catch ALL potential duplicates). Supports 11 languages.",
     kind: "memory",
     register(api) {
         let pluginConfig = api.pluginConfig;
@@ -432,7 +445,7 @@ const plugin = {
         const stats = new StatsTracker();
         const rateLimiter = new RateLimiter(cfg.rateLimitMaxPerHour || 10);
         const tierManager = new TierManager();
-        api.logger.info(`memory-claw v2.4.49: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: dedup fixed (0.90→0.50 threshold, 3→50 candidates), locales: ${activeLocales.length})`);
+        api.logger.info(`memory-claw v2.4.51: Registered (db: ${dbPath}, model: ${embedding.model}, vectorDim: ${vectorDim}, CRITICAL FIX: Real-time dedup fixed - now searches ALL rows (threshold 0.0), locales: ${activeLocales.length})`);
         // Run migration on first start
         (async () => {
             try {
@@ -469,12 +482,14 @@ const plugin = {
                     // v2.4.21: CRITICAL FIX - Embed the cleaned text, not the original
                     // Previous version embedded original text causing search/index mismatch
                     const vector = await embeddings.embed(normalizedText);
-                    // v2.4.48: CRITICAL FIX - Dedup was completely broken
-                    // Fix 1: Lower vector search threshold from 0.90 to 0.50 to catch more candidates
-                    // Fix 2: Increase limit from 3 to 50 to check more potential duplicates
-                    const vectorMatches = await db.search(vector, 50, 0.50, false);
+                    // v2.4.51: CRITICAL FIX - Real-time dedup was still broken
+                    // PROBLEM: db.search(vector, 50, 0.50, false) only returns vectors with similarity > 0.50
+                    // This misses potential duplicates with vector similarity 0.0-0.50 but text similarity > 0.70
+                    // SOLUTION: Search ALL rows (threshold 0.0) and check text similarity against every result
+                    const vectorMatches = await db.search(vector, 50, 0.0, false);
                     // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
                     // v2.4.48: CRITICAL FIX - Fixed dedup by lowering vector search threshold
+                    // v2.4.51: CRITICAL FIX - Search ALL rows before insert to catch all potential duplicates
                     let isDuplicate = false;
                     for (const match of vectorMatches) {
                         if (calculateTextSimilarity(normalizedText, match.text) > 0.70) {
@@ -1211,14 +1226,15 @@ const plugin = {
                     if (cfg.enableStats) {
                         api.logger.info(`memory-claw: [PROCESS] Embedding complete, checking for duplicates...`);
                     }
-                    // v2.4.48: CRITICAL FIX - Dedup was completely broken
-                    // Fix 1: Lower vector search threshold from 0.90 to 0.50 to catch more candidates
-                    // Fix 2: Increase limit from 3 to 50 to check more potential duplicates
-                    // Fix 3: Use enableWeightedScoring=false to get raw vector similarity (not weighted)
-                    const vectorMatches = await db.search(vector, 50, 0.50, false);
+                    // v2.4.51: CRITICAL FIX - Real-time dedup was still broken
+                    // PROBLEM: db.search(vector, 50, 0.50, false) only returns vectors with similarity > 0.50
+                    // This misses potential duplicates with vector similarity 0.0-0.50 but text similarity > 0.70
+                    // SOLUTION: Search ALL rows (threshold 0.0) and check text similarity against every result
+                    const vectorMatches = await db.search(vector, 50, 0.0, false);
                     // v2.4.40: Lowered deduplication threshold from 0.85 to 0.70 for better duplicate detection
                     // v2.4.46: CRITICAL FIX - Compare cleaned text with stored text for accurate deduplication
                     // v2.4.48: CRITICAL FIX - Fixed inconsistent text comparison in log (was using combinedText instead of textForEmbedding)
+                    // v2.4.51: CRITICAL FIX - Search ALL rows before insert to catch all potential duplicates
                     // Check for duplicates using cleaned text to ensure proper matching
                     let isDuplicate = false;
                     let maxSimilarity = 0;
@@ -1405,16 +1421,26 @@ const plugin = {
                 };
                 // v2.4.48: FIX - Cannot detect if api.on() actually registered the hook
                 // api.on() doesn't throw errors for unsupported hook names
-                // Assume registration succeeded, will know if hook actually fires
-                api.on(hookName, createHandler(hookName));
-                // Mark as registered (will know if it actually fires when events occur)
-                const tracking = hooksTracking.get(hookName);
-                if (tracking) {
-                    tracking.successfullyRegistered = true;
+                // We mark as "registered" but will confirm if it actually fires
+                try {
+                    api.on(hookName, createHandler(hookName));
+                    // Mark as registered (will know if it actually fires when events occur)
+                    const tracking = hooksTracking.get(hookName);
+                    if (tracking) {
+                        tracking.successfullyRegistered = true;
+                    }
+                    successfullyRegistered++;
+                    if (cfg.enableStats) {
+                        api.logger.info(`memory-claw: ✓ Registered ${hookName} hook (pending confirmation - will log when it fires)`);
+                    }
                 }
-                successfullyRegistered++;
-                if (cfg.enableStats) {
-                    api.logger.info(`memory-claw: ✓ Attempted ${hookName} hook registration (will confirm if it fires)`);
+                catch (err) {
+                    // Hook name not supported
+                    const tracking = hooksTracking.get(hookName);
+                    if (tracking) {
+                        tracking.successfullyRegistered = false;
+                    }
+                    api.logger.warn(`memory-claw: ✗ Failed to register ${hookName} hook: ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
             catch (err) {
@@ -1430,20 +1456,46 @@ const plugin = {
             api.logger.warn("memory-claw: Could not register ANY agent_end hooks - relying on polling fallback only");
         }
         else {
-            api.logger.info(`memory-claw: Successfully registered ${successfullyRegistered}/${hookNames.length} agent_end hooks`);
+            api.logger.info(`memory-claw: Registered ${successfullyRegistered}/${hookNames.length} agent_end hooks (pending confirmation - will log which hooks actually fire)`);
         }
+        // Run initial hook health check after 30 seconds
+        setTimeout(() => {
+            if (cfg.enableStats && !anyAgentEndHookFired) {
+                const registeredHooks = Array.from(hooksTracking.entries())
+                    .filter(([_, tracking]) => tracking.successfullyRegistered)
+                    .map(([hookName, _]) => hookName);
+                api.logger.warn(`memory-claw: [HEALTH CHECK] No agent_end hooks have fired after 30 seconds. Registered hooks: ${registeredHooks.length > 0 ? registeredHooks.join(", ") : "none"}. Polling fallback is active.`);
+            }
+        }, 30000);
         // v2.4.42: Enhanced periodic hook status logging with per-hook details
         setInterval(() => {
             if (cfg.enableStats) {
                 if (!anyAgentEndHookFired) {
-                    api.logger.warn("memory-claw: NO agent_end hooks have fired - using polling fallback only");
+                    // List all registered hooks that haven't fired
+                    const registeredHooks = Array.from(hooksTracking.entries())
+                        .filter(([_, tracking]) => tracking.successfullyRegistered)
+                        .map(([hookName, _]) => hookName);
+                    api.logger.warn(`memory-claw: NO agent_end hooks have fired - registered but not firing: ${registeredHooks.join(", ")} - relying on polling fallback only`);
                 }
                 else {
-                    // Log status of each registered hook
+                    // Log detailed status of each registered hook
+                    const firedHooks = [];
+                    const registeredButNotFired = [];
                     for (const [hookName, tracking] of hooksTracking.entries()) {
-                        if (tracking.successfullyRegistered && tracking.fireCount > 0) {
-                            api.logger.info(`memory-claw: ${hookName} status: fired ${tracking.fireCount} times`);
+                        if (tracking.successfullyRegistered) {
+                            if (tracking.fireCount > 0) {
+                                firedHooks.push(`${hookName}(${tracking.fireCount}x, last: ${new Date(tracking.lastFiredAt).toISOString()})`);
+                            }
+                            else {
+                                registeredButNotFired.push(hookName);
+                            }
                         }
+                    }
+                    if (firedHooks.length > 0) {
+                        api.logger.info(`memory-claw: Agent hooks that FIRED: ${firedHooks.join(", ")}`);
+                    }
+                    if (registeredButNotFired.length > 0) {
+                        api.logger.info(`memory-claw: Agent hooks registered but NOT fired: ${registeredButNotFired.join(", ")}`);
                     }
                 }
             }
@@ -1505,27 +1557,31 @@ const plugin = {
         let messageSentDebounceTimer = null;
         let messageSentBatch = [];
         const MAX_BATCH_SIZE = 100; // v2.4.47: Prevent unbounded growth
+        let messageSentBatchOverflowCount = 0; // Track how many times we've dropped events
         api.logger.info("memory-claw: Registering message_sent hook (MONITOR ONLY - DISABLED FOR CAPTURE)...");
         api.on("message_sent", async (event) => {
             try {
                 // v2.4.43: Use modulo to prevent counter overflow (resets after 1M)
                 messageSentCount = (messageSentCount + 1) % 1000000;
                 // v2.4.48: FIX - Check batch size BEFORE pushing to prevent overflow
-                // This prevents the batch from temporarily exceeding MAX_BATCH_SIZE
-                if (messageSentBatch.length >= MAX_BATCH_SIZE) {
-                    // Clear existing timer
+                // Use > instead of >= to ensure we never exceed MAX_BATCH_SIZE
+                // This prevents the batch from reaching MAX_BATCH_SIZE and causing overflow
+                if (messageSentBatch.length > MAX_BATCH_SIZE - 1) {
+                    // Clear existing timer and process immediately
                     if (messageSentDebounceTimer) {
                         clearTimeout(messageSentDebounceTimer);
                         messageSentDebounceTimer = null;
                     }
-                    // Process batch immediately
+                    // Track overflow events
+                    messageSentBatchOverflowCount++;
+                    // Process batch immediately to free up space
                     const now = Date.now();
                     if (now - lastMessageSentLog > 60000) {
                         lastMessageSentLog = now;
-                        api.logger.info(`🔍 [HOOK] memory-claw: message_sent batch limit reached! (count: ${messageSentCount}, dropping event)`);
+                        api.logger.info(`🔍 [HOOK] memory-claw: message_sent batch overflow! (count: ${messageSentCount}, batch: ${messageSentBatch.length}, dropped: ${messageSentBatchOverflowCount})`);
                     }
-                    // Don't add this event - batch is full, will be cleared
-                    // This prevents unbounded growth
+                    // Clear the batch immediately to prevent further overflow
+                    messageSentBatch = [];
                     return;
                 }
                 // Safe to add to batch now

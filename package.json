@@ -1,7 +1,7 @@
 {
   "name": "memory-claw",
-  "version": "2.4.49",
-  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.49: CRITICAL FIX - Deduplication completely broken (182 rows for 32 unique texts). Fixed by lowering vector search threshold from 0.90 to 0.50 and increasing candidates from 3 to 50. Added cleanup script.",
+  "version": "2.4.50",
+  "description": "100% autonomous multilingual OpenClaw plugin for memory capture and recall via LanceDB + Mistral Embeddings. v2.4.50: CRITICAL FIX - Fixed agent_end hook detection and message_sent buffer overflow. Enhanced hook tracking with health checks.",
   "main": "index.ts",
   "scripts": {
     "test": "echo \"No tests configured\" && exit 0",
